@@ -45,6 +45,13 @@ WAITING_EDIT = 1
 PENDING_FILE = "pending_posts.json"
 SEEN_FILE = "seen_ids.json"
 
+SLOT_LABELS = {
+    "morning_insight":    "☀️ Утренний инсайт",
+    "afternoon_practice": "📚 Практика дня",
+    "evening_case":       "🌙 Кейс вечера",
+    "tool":               "🛠 Полезняшка",
+}
+
 
 # ─── Storage helpers ──────────────────────────────────────────────────────
 
@@ -76,16 +83,34 @@ def save_pending(pending: dict) -> None:
     _save_json(PENDING_FILE, pending)
 
 
-# ─── Keyboard factory ─────────────────────────────────────────────────────
+# ─── Helpers ──────────────────────────────────────────────────────────────
+
+def build_header(post: dict) -> str:
+    """Строим шапку сообщения с источником, датой и ссылкой на оригинал."""
+    label = SLOT_LABELS.get(post.get("post_format", ""), "📋 Черновик")
+    source = post.get("source", "")
+    published = post.get("published", "")
+    url = post.get("url", "")
+
+    date_str = f" · {published}" if published else ""
+    source_line = f"📰 <b>{source}</b>{date_str}"
+    if url:
+        source_line += f'\n🔗 <a href="{url}">Оригинал</a>'
+
+    return f"<b>{label}</b>\n{source_line}\n\n"
+
 
 def approval_keyboard(post_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("✅ Опубликовать", callback_data=f"approve_{post_id}"),
-            InlineKeyboardButton("🔄 Переписать",   callback_data=f"rewrite_{post_id}"),
+            InlineKeyboardButton("✅ Опубликовать",  callback_data=f"approve_{post_id}"),
+            InlineKeyboardButton("🔄 Переписать",    callback_data=f"rewrite_{post_id}"),
         ],
         [
             InlineKeyboardButton("✏️ Редактировать", callback_data=f"edit_{post_id}"),
+            InlineKeyboardButton("⏭ Следующий",      callback_data=f"next_{post_id}"),
+        ],
+        [
             InlineKeyboardButton("❌ Пропустить",    callback_data=f"skip_{post_id}"),
         ],
     ])
@@ -97,7 +122,6 @@ async def run_slot(context: ContextTypes.DEFAULT_TYPE, post_format: str) -> None
     """Собрать контент для слота, трансформировать и отправить черновик."""
     logger.info(f"Running slot: {post_format}")
     seen = load_seen()
-    pending = load_pending()
 
     try:
         items = fetch_for_slot(post_format, max_items=10)
@@ -111,49 +135,48 @@ async def run_slot(context: ContextTypes.DEFAULT_TYPE, post_format: str) -> None
             candidates = items[:3]
 
         item = random.choice(candidates)
-        seen.add(item.url)
-        save_seen(seen)
-
-        logger.info(f"Transforming: {item.title[:60]}")
-        text = transform(item)
-        if not text:
-            logger.warning("Empty transform result")
-            return
-
-        post_id = f"{post_format}_{abs(hash(item.url))}"
-        pending[post_id] = {
-            "text": text,
-            "title": item.title,
-            "post_format": item.post_format,
-            "source": item.source,
-            "url": item.url,
-            "summary": item.summary,
-            "hashtag": item.hashtag,
-        }
-        save_pending(pending)
-
-        slot_labels = {
-            "morning_insight":    "☀️ Утренний инсайт",
-            "afternoon_practice": "📚 Практика дня",
-            "evening_case":       "🌙 Кейс вечера",
-            "tool":               "🛠 Полезняшка",
-        }
-        label = slot_labels.get(post_format, post_format)
-
-        await context.bot.send_message(
-            chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
-            text=(
-                f"📋 <b>{label}</b>\n"
-                f"📰 {item.source}\n\n"
-                f"{text}"
-            ),
-            parse_mode=ParseMode.HTML,
-            reply_markup=approval_keyboard(post_id),
-        )
-        logger.info(f"Draft sent for slot {post_format}: {post_id}")
+        await _send_draft(context, item)
 
     except Exception as e:
         logger.error(f"Slot {post_format} error: {e}")
+
+
+async def _send_draft(context: ContextTypes.DEFAULT_TYPE, item: ContentItem) -> None:
+    """Трансформировать item и отправить черновик администратору."""
+    seen = load_seen()
+    pending = load_pending()
+
+    seen.add(item.url)
+    save_seen(seen)
+
+    logger.info(f"Transforming: {item.title[:60]}")
+    text = transform(item)
+    if not text:
+        logger.warning("Empty transform result")
+        return
+
+    post_id = f"{item.post_format}_{abs(hash(item.url))}"
+    pending[post_id] = {
+        "text": text,
+        "title": item.title,
+        "post_format": item.post_format,
+        "source": item.source,
+        "url": item.url,
+        "summary": item.summary,
+        "hashtag": item.hashtag,
+        "published": item.published or "",
+    }
+    save_pending(pending)
+
+    header = build_header(pending[post_id])
+    await context.bot.send_message(
+        chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+        text=header + text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=approval_keyboard(post_id),
+        disable_web_page_preview=True,
+    )
+    logger.info(f"Draft sent for slot {item.post_format}: {post_id}")
 
 
 # ─── Scheduled jobs ───────────────────────────────────────────────────────
@@ -229,6 +252,53 @@ async def on_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info(f"Skipped post {post_id}")
 
 
+async def on_next(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показать следующий пост из того же слота."""
+    query = update.callback_query
+    await query.answer("Ищу следующий пост...")
+
+    post_id = query.data.removeprefix("next_")
+    pending = load_pending()
+    post = pending.get(post_id)
+
+    if not post:
+        await query.edit_message_text("⚠️ Пост не найден.")
+        return
+
+    post_format = post.get("post_format", "morning_insight")
+    seen = load_seen()
+
+    # Пометить текущий как пропущенный
+    if post_id in pending:
+        del pending[post_id]
+        save_pending(pending)
+
+    await query.edit_message_text(
+        query.message.text + "\n\n⏭ <i>Загружаю следующий...</i>",
+        parse_mode=ParseMode.HTML,
+    )
+
+    try:
+        items = fetch_for_slot(post_format, max_items=10)
+        candidates = [i for i in items if i.url not in seen]
+        if not candidates:
+            await context.bot.send_message(
+                chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+                text="😔 Больше новых постов для этого слота нет. Попробуй позже.",
+            )
+            return
+
+        item = random.choice(candidates[:5])
+        await _send_draft(context, item)
+
+    except Exception as e:
+        logger.error(f"Next post error: {e}")
+        await context.bot.send_message(
+            chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+            text=f"❌ Ошибка при загрузке следующего поста: {e}",
+        )
+
+
 async def on_rewrite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -251,6 +321,7 @@ async def on_rewrite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             source=post["source"],
             post_format=post["post_format"],
             hashtag=post["hashtag"],
+            published=post.get("published", ""),
         )
         new_text = transform(item)
         if not new_text:
@@ -260,20 +331,12 @@ async def on_rewrite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         pending[post_id]["text"] = new_text
         save_pending(pending)
 
-        slot_labels = {
-            "morning_insight":    "☀️ Утренний инсайт",
-            "afternoon_practice": "📚 Практика дня",
-            "evening_case":       "🌙 Кейс вечера",
-            "tool":               "🛠 Полезняшка",
-        }
-        label = slot_labels.get(post["post_format"], post["post_format"])
-
+        header = build_header(pending[post_id])
         await query.edit_message_text(
-            f"📋 <b>{label}</b> (переписан)\n"
-            f"📰 {post['source']}\n\n"
-            f"{new_text}",
+            header + new_text + "\n\n<i>(переписан)</i>",
             parse_mode=ParseMode.HTML,
             reply_markup=approval_keyboard(post_id),
+            disable_web_page_preview=True,
         )
         logger.info(f"Rewritten post {post_id}")
 
@@ -320,10 +383,12 @@ async def on_edit_receive(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     save_pending(pending)
     context.user_data.pop("editing_post_id", None)
 
+    header = build_header(pending[post_id])
     await update.message.reply_text(
-        f"📋 <b>Предпросмотр:</b>\n\n{new_text}",
+        header + new_text,
         parse_mode=ParseMode.HTML,
         reply_markup=approval_keyboard(post_id),
+        disable_web_page_preview=True,
     )
     return ConversationHandler.END
 
@@ -352,6 +417,7 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(on_approve, pattern=r"^approve_"))
     app.add_handler(CallbackQueryHandler(on_skip,    pattern=r"^skip_"))
     app.add_handler(CallbackQueryHandler(on_rewrite, pattern=r"^rewrite_"))
+    app.add_handler(CallbackQueryHandler(on_next,    pattern=r"^next_"))
 
     # Расписание (UTC, Бали = UTC+8)
     jq = app.job_queue
@@ -369,10 +435,10 @@ def main() -> None:
 
     logger.info("=" * 55)
     logger.info("Bot started! Schedule (Bali UTC+8):")
-    logger.info("  09:00 daily      — Morning Insight  #мысливслух")
-    logger.info("  11:00 Tue/Thu/Sat — Tool            #полезняшка")
-    logger.info("  14:00 daily      — Afternoon Practice #воронкиипродажи")
-    logger.info("  19:00 daily      — Evening Case     #разборкейса")
+    logger.info("  09:00 daily       — Morning Insight  #мысливслух")
+    logger.info("  11:00 Tue/Thu/Sat — Tool             #полезняшка")
+    logger.info("  14:00 daily       — Afternoon Practice #воронкиипродажи")
+    logger.info("  19:00 daily       — Evening Case     #разборкейса")
     logger.info(f"  Channel: {config.TELEGRAM_CHANNEL_ID}")
     logger.info(f"  Admin:   {config.TELEGRAM_ADMIN_CHAT_ID}")
     logger.info("=" * 55)

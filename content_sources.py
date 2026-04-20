@@ -10,6 +10,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import time
 
 logger = logging.getLogger(__name__)
@@ -158,6 +159,21 @@ def _fetch_rss(source: dict, post_format: str, max_items: int = 5) -> list[Conte
             elif hasattr(entry, "content"):
                 summary = entry.content[0].value[:800]
 
+            # Парсим дату публикации в читаемый формат
+            raw_date = entry.get("published", "") or entry.get("updated", "")
+            published_fmt = ""
+            if raw_date:
+                try:
+                    dt = parsedate_to_datetime(raw_date)
+                    published_fmt = dt.strftime("%d.%m.%Y")
+                except Exception:
+                    try:
+                        # Попробуем другой формат
+                        dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+                        published_fmt = dt.strftime("%d.%m.%Y")
+                    except Exception:
+                        published_fmt = raw_date[:10] if raw_date else ""
+
             items.append(ContentItem(
                 title=entry.get("title", ""),
                 url=entry.get("link", ""),
@@ -165,7 +181,7 @@ def _fetch_rss(source: dict, post_format: str, max_items: int = 5) -> list[Conte
                 source=source["name"],
                 post_format=post_format,
                 hashtag=source["hashtag"],
-                published=entry.get("published", ""),
+                published=published_fmt,
             ))
     except Exception as e:
         logger.warning(f"RSS fetch failed for {source['name']}: {e}")
