@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 AI Content Curator Bot
-Flow: Reddit → Claude transform → admin approval (Telegram) → publish to channel
+Flow: Hacker News → Claude transform → admin approval (Telegram) → publish to channel
 """
 
 import json
@@ -20,7 +20,7 @@ from telegram.ext import (
 )
 
 import config
-from reddit_client import fetch_posts
+from hn_client import fetch_posts
 from content_transformer import transform_post
 
 logging.basicConfig(
@@ -210,7 +210,7 @@ async def fetch_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         if sent >= config.MAX_POSTS_PER_RUN:
             break
 
-        logger.info("Transforming: %s (r/%s)", post.title[:60], post.subreddit)
+        logger.info("Transforming: %s (%s)", post.title[:60], post.source)
         text = transform_post(post)
         if not text:
             seen.add(post.post_id)
@@ -219,7 +219,7 @@ async def fetch_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         pending[post.post_id] = {"text": text, "title": post.title}
         save_pending(pending)
 
-        meta = f"<b>r/{post.subreddit}</b> · {post.upvotes} upvotes"
+        meta = f"<b>{post.source}</b> · {post.upvotes} очков"
         await context.bot.send_message(
             chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
             text=f"📋 <b>На проверку:</b>\n{meta}\n\n{text}",
