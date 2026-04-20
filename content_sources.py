@@ -137,7 +137,7 @@ RSS_SOURCES = {
         {
             "name": "Zapier Blog",
             "url": "https://zapier.com/blog/feeds/latest/",
-            "hashtag": "#полезняшка",
+            "hashtag": "#tools",
         },
         {
             "name": "Product Hunt AI",
@@ -147,7 +147,7 @@ RSS_SOURCES = {
         {
             "name": "Backlinko",
             "url": "https://backlinko.com/feed",
-            "hashtag": "#полезняшка",
+            "hashtag": "#tools",
         },
         {
             "name": "a16z AI",
@@ -184,7 +184,7 @@ FALLBACK_RSS = {
         {
             "name": "Product Hunt Daily",
             "url": "https://www.producthunt.com/feed",
-            "hashtag": "#полезняшка",
+            "hashtag": "#tools",
         },
     ],
 }

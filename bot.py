@@ -6,7 +6,7 @@ AI Content Curator Bot для @bazuevaconsalt
   2. Переводит заголовки на русский (быстро, без полного текста)
   3. Присылает одно сообщение-дайджест со списком тем + кнопки 1-10
   4. Пользователь нажимает номер → бот генерирует полный перевод статьи
-  5. Готовый пост: Опубликовать / Переписать / Редактировать / Пропустить
+  5. Готовый пост: Опубликовать / Переписать / Редактировать / Пропустить / 🖼 Карточка
 
 Расписание (UTC, Бали UTC+8):
   01:00 UTC (09:00 Бали) — дайджест 10 тем на день
@@ -66,8 +66,10 @@ CATEGORIES = {
     "#воронкиипродажи":  "Продажи и Маркетинг",
     "#операционка":      "Управление и Процессы",
     "#разборкейса":      "Бизнес-разбор",
-    "#полезняшка":       "Инструменты для бизнеса",
+    "#tools":            "Инструменты для бизнеса",
     "#aiдлябизнеса":     "Нейросети для SMB",
+    "#трафик":           "SEO и Трафик",
+    "#контентмаркетинг": "Контент-маркетинг",
 }
 
 
@@ -136,6 +138,7 @@ def draft_keyboard(post_id: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton("❌ Пропустить",    callback_data=f"skip_{post_id}"),
         ],
         [
+            InlineKeyboardButton("🖼 Карточка",      callback_data=f"card_{post_id}"),
             InlineKeyboardButton("📋 К дайджесту",   callback_data="show_digest"),
         ],
     ])
@@ -358,54 +361,13 @@ async def on_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         source_line += f'\n🔗 <a href="{item.url}">Оригинал</a>'
     header = f"<b>{label}</b> | 📂 {category}\n{source_line}\n\n"
 
-    # Генерируем карточку-заголовок в стиле bazueva.design
-    card_path = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-            card_path = tmp.name
-        loop2 = asyncio.get_event_loop()
-        card_path = await loop2.run_in_executor(
-            None,
-            lambda: generate_card(
-                title=item_data["ru_title"],
-                source=item.source,
-                hashtag=item.hashtag,
-                output_path=card_path,
-            )
-        )
-        logger.info(f"Card generated: {card_path}")
-    except Exception as e:
-        logger.warning(f"Card generation failed: {e}")
-        card_path = None
-
-    if card_path and os.path.exists(card_path):
-        try:
-            with open(card_path, "rb") as photo_file:
-                await context.bot.send_photo(
-                    chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
-                    photo=photo_file,
-                    caption=header + text,
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=draft_keyboard(post_id),
-                )
-            os.unlink(card_path)
-        except Exception as e:
-            logger.warning(f"Photo send failed ({e}), sending as text")
-            await context.bot.send_message(
-                chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
-                text=header + text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=draft_keyboard(post_id),
-                disable_web_page_preview=True,
-            )
-    else:
-        await context.bot.send_message(
-            chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
-            text=header + text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=draft_keyboard(post_id),
-            disable_web_page_preview=True,
-        )
+    await context.bot.send_message(
+        chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+        text=header + text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=draft_keyboard(post_id),
+        disable_web_page_preview=True,
+    )
     logger.info(f"Draft sent for: {item.title[:50]}")
 
 
@@ -441,10 +403,121 @@ async def on_show_digest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
 
+# ─── Callback: 🖼 Карточка — генерация по требованию ─────────────────────
+
+async def on_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Сгенерировать и отправить визуальную карточку для поста."""
+    query = update.callback_query
+    await query.answer("Генерирую карточку...")
+
+    post_id = query.data.removeprefix("card_")
+    pending = load_pending()
+    post = pending.get(post_id)
+
+    if not post:
+        await context.bot.send_message(
+            chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+            text="⚠️ Пост не найден.",
+        )
+        return
+
+    ru_title = post.get("ru_title", post.get("title", ""))
+    source = post.get("source", "")
+    hashtag = post.get("hashtag", "")
+
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            card_path = tmp.name
+
+        loop = asyncio.get_event_loop()
+        card_path = await loop.run_in_executor(
+            None,
+            lambda: generate_card(
+                title=ru_title,
+                source=source,
+                hashtag=hashtag,
+                output_path=card_path,
+            )
+        )
+        logger.info(f"Card generated on demand: {card_path}")
+
+        with open(card_path, "rb") as photo_file:
+            await context.bot.send_photo(
+                chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+                photo=photo_file,
+                caption=f"🖼 <b>Карточка для поста</b>\n<i>{ru_title}</i>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("📤 Опубликовать с карточкой", callback_data=f"approve_with_card_{post_id}"),
+                ]]),
+            )
+        os.unlink(card_path)
+
+    except Exception as e:
+        logger.error(f"Card generation failed: {e}")
+        await context.bot.send_message(
+            chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+            text=f"❌ Не удалось сгенерировать карточку: {e}",
+        )
+
+
+# ─── Callback: approve with card ─────────────────────────────────────────
+
+async def on_approve_with_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Опубликовать пост в канал вместе с карточкой."""
+    query = update.callback_query
+    await query.answer("Публикую с карточкой...")
+
+    post_id = query.data.removeprefix("approve_with_card_")
+    pending = load_pending()
+    post = pending.get(post_id)
+
+    if not post or not post.get("text"):
+        await query.edit_message_text("⚠️ Пост не найден или пустой.")
+        return
+
+    try:
+        ru_title = post.get("ru_title", post.get("title", ""))
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            card_path = tmp.name
+
+        card_path = generate_card(
+            title=ru_title,
+            source=post.get("source", ""),
+            hashtag=post.get("hashtag", ""),
+            output_path=card_path,
+        )
+
+        with open(card_path, "rb") as photo_file:
+            await context.bot.send_photo(
+                chat_id=config.TELEGRAM_CHANNEL_ID,
+                photo=photo_file,
+                caption=post["text"],
+                parse_mode=ParseMode.HTML,
+            )
+        os.unlink(card_path)
+
+        del pending[post_id]
+        save_pending(pending)
+
+        await query.edit_message_caption(
+            caption=query.message.caption + "\n\n✅ <b>Опубликовано с карточкой!</b>",
+            parse_mode=ParseMode.HTML,
+        )
+        logger.info(f"Published with card: {post.get('title', '')[:50]}")
+
+    except Exception as e:
+        logger.error(f"Publish with card failed: {e}")
+        await context.bot.send_message(
+            chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+            text=f"❌ Ошибка публикации с карточкой: {e}",
+        )
+
+
 # ─── Callback: approve / skip / rewrite / edit ────────────────────────────
 
 async def on_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Опубликовать пост в канал."""
+    """Опубликовать пост в канал (только текст)."""
     query = update.callback_query
     await query.answer("Публикую...")
 
@@ -457,38 +530,12 @@ async def on_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     try:
-        # При публикации в канал — тоже с карточкой
-        card_path_pub = None
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-                card_path_pub = tmp.name
-            ru_title_pub = post.get("ru_title", post.get("title", ""))
-            card_path_pub = generate_card(
-                title=ru_title_pub,
-                source=post.get("source", ""),
-                hashtag=post.get("hashtag", ""),
-                output_path=card_path_pub,
-            )
-        except Exception as e:
-            logger.warning(f"Card generation failed on publish: {e}")
-            card_path_pub = None
-
-        if card_path_pub and os.path.exists(card_path_pub):
-            with open(card_path_pub, "rb") as photo_file:
-                await context.bot.send_photo(
-                    chat_id=config.TELEGRAM_CHANNEL_ID,
-                    photo=photo_file,
-                    caption=post["text"],
-                    parse_mode=ParseMode.HTML,
-                )
-            os.unlink(card_path_pub)
-        else:
-            await context.bot.send_message(
-                chat_id=config.TELEGRAM_CHANNEL_ID,
-                text=post["text"],
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
+        await context.bot.send_message(
+            chat_id=config.TELEGRAM_CHANNEL_ID,
+            text=post["text"],
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
         del pending[post_id]
         save_pending(pending)
 
@@ -578,54 +625,13 @@ async def on_rewrite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         source_line += f'\n🔗 <a href="{post["url"]}">Оригинал</a>'
     header = f"<b>{label}</b> | 📂 {category}\n{source_line}\n\n"
 
-    # Генерируем карточку для переписанного поста
-    card_path_rw = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-            card_path_rw = tmp.name
-        loop_rw = asyncio.get_event_loop()
-        ru_title_rw = pending[post_id].get("ru_title", post.get("title", ""))
-        card_path_rw = await loop_rw.run_in_executor(
-            None,
-            lambda: generate_card(
-                title=ru_title_rw,
-                source=post["source"],
-                hashtag=post.get("hashtag", ""),
-                output_path=card_path_rw,
-            )
-        )
-    except Exception as e:
-        logger.warning(f"Card generation failed on rewrite: {e}")
-        card_path_rw = None
-
-    if card_path_rw and os.path.exists(card_path_rw):
-        try:
-            with open(card_path_rw, "rb") as photo_file:
-                await context.bot.send_photo(
-                    chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
-                    photo=photo_file,
-                    caption=header + text,
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=draft_keyboard(post_id),
-                )
-            os.unlink(card_path_rw)
-        except Exception as e:
-            logger.warning(f"Photo send failed on rewrite ({e}), sending as text")
-            await context.bot.send_message(
-                chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
-                text=header + text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=draft_keyboard(post_id),
-                disable_web_page_preview=True,
-            )
-    else:
-        await context.bot.send_message(
-            chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
-            text=header + text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=draft_keyboard(post_id),
-            disable_web_page_preview=True,
-        )
+    await context.bot.send_message(
+        chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+        text=header + text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=draft_keyboard(post_id),
+        disable_web_page_preview=True,
+    )
 
 
 async def on_edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -726,12 +732,14 @@ def main() -> None:
     )
 
     app.add_handler(conv)
-    app.add_handler(CallbackQueryHandler(on_pick,           pattern=r"^pick_\d+$"))
-    app.add_handler(CallbackQueryHandler(on_refresh_digest, pattern=r"^refresh_digest$"))
-    app.add_handler(CallbackQueryHandler(on_show_digest,    pattern=r"^show_digest$"))
-    app.add_handler(CallbackQueryHandler(on_approve,        pattern=r"^approve_"))
-    app.add_handler(CallbackQueryHandler(on_skip,           pattern=r"^skip_"))
-    app.add_handler(CallbackQueryHandler(on_rewrite,        pattern=r"^rewrite_"))
+    app.add_handler(CallbackQueryHandler(on_pick,              pattern=r"^pick_\d+$"))
+    app.add_handler(CallbackQueryHandler(on_refresh_digest,    pattern=r"^refresh_digest$"))
+    app.add_handler(CallbackQueryHandler(on_show_digest,       pattern=r"^show_digest$"))
+    app.add_handler(CallbackQueryHandler(on_card,              pattern=r"^card_"))
+    app.add_handler(CallbackQueryHandler(on_approve_with_card, pattern=r"^approve_with_card_"))
+    app.add_handler(CallbackQueryHandler(on_approve,           pattern=r"^approve_"))
+    app.add_handler(CallbackQueryHandler(on_skip,              pattern=r"^skip_"))
+    app.add_handler(CallbackQueryHandler(on_rewrite,           pattern=r"^rewrite_"))
     app.add_handler(CommandHandler("start",  cmd_start))
     app.add_handler(CommandHandler("digest", cmd_digest))
 
