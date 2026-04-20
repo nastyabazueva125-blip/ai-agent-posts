@@ -26,7 +26,7 @@ HEADERS = {
     "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
 }
 
-MAX_AGE_DAYS = 7
+MAX_AGE_DAYS = 90  # TG-каналы: смотрим за последние 3 месяца
 MIN_TEXT_LEN = 80   # минимальная длина поста (игнорируем слишком короткие)
 MAX_TEXT_LEN = 3000 # обрезаем слишком длинные
 
