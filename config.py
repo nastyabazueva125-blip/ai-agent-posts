@@ -3,7 +3,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+# OpenAI API key (читается автоматически из переменной окружения OPENAI_API_KEY)
+# Не нужно указывать явно — openai SDK читает её сам
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHANNEL_ID = os.environ["TELEGRAM_CHANNEL_ID"]

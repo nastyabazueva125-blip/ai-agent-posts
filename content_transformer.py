@@ -1,8 +1,8 @@
-import anthropic
+from openai import OpenAI
 import config
 from hn_client import HNPost
 
-client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+client = OpenAI()  # использует OPENAI_API_KEY из окружения
 
 SYSTEM_PROMPT = """Ты — контент-менеджер Telegram-канала. Твоя задача — переписывать посты из Hacker News в стиле живого, уверенного предпринимателя.
 
@@ -25,11 +25,11 @@ def transform_post(post: HNPost) -> str | None:
         else post.title
     )
 
-    message = client.messages.create(
-        model="claude-opus-4-5",
+    response = client.chat.completions.create(
+        model="gpt-4.1-mini",
         max_tokens=1024,
-        system=SYSTEM_PROMPT,
         messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": (
@@ -39,9 +39,8 @@ def transform_post(post: HNPost) -> str | None:
                     f"Пост набрал {post.upvotes} очков на Hacker News.\n"
                     f"Ссылка на оригинал: {post.url}"
                 ),
-            }
+            },
         ],
     )
 
-    text_blocks = [b.text for b in message.content if b.type == "text"]
-    return text_blocks[0].strip() if text_blocks else None
+    return response.choices[0].message.content.strip() if response.choices else None
