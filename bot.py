@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
 AI Content Curator Bot для @bazuevaconsalt
+Двухэтапная модерация:
+  1. Бот присылает ТЕМУ + оригинальный заголовок + ссылку
+  2. Если одобрено — генерирует пост в стиле Насти
+  3. Пост можно опубликовать, переписать, редактировать или пропустить
+
 Расписание (время Бали UTC+8):
   09:00 — Утренний инсайт        (#мысливслух)
   11:00 вт/чт/сб — Полезняшка   (#полезняшка)
@@ -40,7 +45,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ConversationHandler state
+# ConversationHandler states
 WAITING_EDIT = 1
 
 PENDING_FILE = "pending_posts.json"
@@ -51,6 +56,15 @@ SLOT_LABELS = {
     "afternoon_practice": "📚 Практика дня",
     "evening_case":       "🌙 Кейс вечера",
     "tool":               "🛠 Полезняшка",
+}
+
+CATEGORIES = {
+    "#мысливслух":       "Мышление и Подход",
+    "#воронкиипродажи":  "Продажи и Маркетинг",
+    "#операционка":      "Управление и Процессы",
+    "#разборкейса":      "Бизнес-разбор",
+    "#полезняшка":       "Инструменты для бизнеса",
+    "#aiдлябизнеса":     "Нейросети для SMB",
 }
 
 
@@ -84,22 +98,75 @@ def save_pending(pending: dict) -> None:
     _save_json(PENDING_FILE, pending)
 
 
-# ─── Helpers ──────────────────────────────────────────────────────────────
+# ─── Keyboards ────────────────────────────────────────────────────────────
 
-def build_header(post: dict) -> str:
-    """Строим шапку сообщения с источником, датой и ссылкой на оригинал."""
+def topic_keyboard(post_id: str) -> InlineKeyboardMarkup:
+    """Клавиатура для ЭТАПА 1 — одобрение темы."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Написать пост", callback_data=f"generate_{post_id}"),
+            InlineKeyboardButton("⏭ Следующая тема", callback_data=f"next_{post_id}"),
+        ],
+        [
+            InlineKeyboardButton("❌ Пропустить",    callback_data=f"skip_{post_id}"),
+        ],
+    ])
+
+
+def draft_keyboard(post_id: str) -> InlineKeyboardMarkup:
+    """Клавиатура для ЭТАПА 2 — модерация готового поста."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Опубликовать",  callback_data=f"approve_{post_id}"),
+            InlineKeyboardButton("🔄 Переписать",    callback_data=f"rewrite_{post_id}"),
+        ],
+        [
+            InlineKeyboardButton("✏️ Редактировать", callback_data=f"edit_{post_id}"),
+            InlineKeyboardButton("⏭ Другая тема",    callback_data=f"next_{post_id}"),
+        ],
+        [
+            InlineKeyboardButton("❌ Пропустить",    callback_data=f"skip_{post_id}"),
+        ],
+    ])
+
+
+# ─── Message builders ─────────────────────────────────────────────────────
+
+def build_topic_message(post: dict) -> str:
+    """ЭТАП 1: показываем тему + оригинал, без сгенерированного текста."""
     label = SLOT_LABELS.get(post.get("post_format", ""), "📋 Черновик")
-    
-    categories = {
-        "#мысливслух": "Мышление и Подход",
-        "#воронкиипродажи": "Продажи и Маркетинг",
-        "#операционка": "Управление и Процессы",
-        "#разборкейса": "Бизнес-разбор",
-        "#полезняшка": "Инструменты для бизнеса",
-        "#aiдлябизнеса": "Нейросети для SMB",
-    }
-    category = categories.get(post.get("hashtag", ""), "Практика для бизнеса")
-    
+    category = CATEGORIES.get(post.get("hashtag", ""), "Практика для бизнеса")
+    source = post.get("source", "")
+    published = post.get("published", "")
+    url = post.get("url", "")
+    title = post.get("title", "")
+    summary = post.get("summary", "")[:300]
+
+    date_str = f" · {published}" if published else ""
+
+    lines = [
+        f"<b>{label}</b> | 📂 {category}",
+        f"",
+        f"📌 <b>{title}</b>",
+        f"",
+        f"📰 <b>{source}</b>{date_str}",
+    ]
+    if url:
+        lines.append(f'🔗 <a href="{url}">Читать оригинал</a>')
+    if summary:
+        lines.append(f"")
+        lines.append(f"<i>{summary}…</i>")
+
+    lines.append(f"")
+    lines.append(f"Написать пост на эту тему?")
+
+    return "\n".join(lines)
+
+
+def build_draft_header(post: dict) -> str:
+    """ЭТАП 2: шапка для готового поста."""
+    label = SLOT_LABELS.get(post.get("post_format", ""), "📋 Черновик")
+    category = CATEGORIES.get(post.get("hashtag", ""), "Практика для бизнеса")
     source = post.get("source", "")
     published = post.get("published", "")
     url = post.get("url", "")
@@ -112,26 +179,10 @@ def build_header(post: dict) -> str:
     return f"<b>{label}</b> | 📂 {category}\n{source_line}\n\n"
 
 
-def approval_keyboard(post_id: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅ Опубликовать",  callback_data=f"approve_{post_id}"),
-            InlineKeyboardButton("🔄 Переписать",    callback_data=f"rewrite_{post_id}"),
-        ],
-        [
-            InlineKeyboardButton("✏️ Редактировать", callback_data=f"edit_{post_id}"),
-            InlineKeyboardButton("⏭ Следующий",      callback_data=f"next_{post_id}"),
-        ],
-        [
-            InlineKeyboardButton("❌ Пропустить",    callback_data=f"skip_{post_id}"),
-        ],
-    ])
-
-
 # ─── Slot runner ──────────────────────────────────────────────────────────
 
 async def run_slot(context: ContextTypes.DEFAULT_TYPE, post_format: str) -> None:
-    """Собрать контент для слота, трансформировать и отправить черновик."""
+    """Собрать контент для слота и показать ТЕМУ (этап 1)."""
     logger.info(f"Running slot: {post_format}")
     seen = load_seen()
 
@@ -141,35 +192,29 @@ async def run_slot(context: ContextTypes.DEFAULT_TYPE, post_format: str) -> None
             logger.warning(f"No items for slot {post_format}")
             return
 
-        # Выбираем случайный из топ-5, которых ещё не видели
         candidates = [i for i in items[:5] if i.url not in seen]
         if not candidates:
             candidates = items[:3]
 
         item = random.choice(candidates)
-        await _send_draft(context, item)
+        await _send_topic(context, item)
 
     except Exception as e:
         logger.error(f"Slot {post_format} error: {e}")
 
 
-async def _send_draft(context: ContextTypes.DEFAULT_TYPE, item: ContentItem) -> None:
-    """Трансформировать item и отправить черновик администратору."""
+async def _send_topic(context: ContextTypes.DEFAULT_TYPE, item: ContentItem) -> None:
+    """ЭТАП 1: отправить тему + оригинал для одобрения."""
     seen = load_seen()
     pending = load_pending()
 
     seen.add(item.url)
     save_seen(seen)
 
-    logger.info(f"Transforming: {item.title[:60]}")
-    text = transform(item)
-    if not text:
-        logger.warning("Empty transform result")
-        return
-
     post_id = f"{item.post_format}_{abs(hash(item.url))}"
     pending[post_id] = {
-        "text": text,
+        "stage": "topic",          # этап 1 — тема ещё не сгенерирована
+        "text": None,              # текст будет после генерации
         "title": item.title,
         "post_format": item.post_format,
         "source": item.source,
@@ -180,26 +225,25 @@ async def _send_draft(context: ContextTypes.DEFAULT_TYPE, item: ContentItem) -> 
     }
     save_pending(pending)
 
-    header = build_header(pending[post_id])
+    message = build_topic_message(pending[post_id])
 
-    # Retry up to 3 times on network errors
     for attempt in range(3):
         try:
             await context.bot.send_message(
                 chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
-                text=header + text,
+                text=message,
                 parse_mode=ParseMode.HTML,
-                reply_markup=approval_keyboard(post_id),
+                reply_markup=topic_keyboard(post_id),
                 disable_web_page_preview=True,
             )
-            logger.info(f"Draft sent for slot {item.post_format}: {post_id}")
+            logger.info(f"Topic sent for slot {item.post_format}: {item.title[:50]}")
             break
         except Exception as e:
             if attempt < 2:
                 logger.warning(f"Send attempt {attempt+1} failed: {e} — retrying in 5s")
                 await asyncio.sleep(5)
             else:
-                logger.error(f"Failed to send draft after 3 attempts: {e}")
+                logger.error(f"Failed to send topic after 3 attempts: {e}")
                 raise
 
 
@@ -230,7 +274,68 @@ async def job_tool(context: ContextTypes.DEFAULT_TYPE):
 
 # ─── Callback handlers ────────────────────────────────────────────────────
 
+async def on_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """ЭТАП 1 → 2: одобрили тему, генерируем пост."""
+    query = update.callback_query
+    await query.answer("Генерирую пост...")
+
+    post_id = query.data.removeprefix("generate_")
+    pending = load_pending()
+    post = pending.get(post_id)
+
+    if not post:
+        await query.edit_message_text("⚠️ Тема не найдена — возможно, уже обработана.")
+        return
+
+    await query.edit_message_text(
+        query.message.text + "\n\n⏳ <i>Генерирую пост...</i>",
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+    try:
+        item = ContentItem(
+            title=post["title"],
+            url=post["url"],
+            summary=post.get("summary", ""),
+            source=post["source"],
+            post_format=post["post_format"],
+            hashtag=post["hashtag"],
+            published=post.get("published", ""),
+        )
+        text = transform(item)
+        if not text:
+            await context.bot.send_message(
+                chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+                text="❌ Не удалось сгенерировать пост. Попробуй другую тему.",
+            )
+            return
+
+        pending[post_id]["text"] = text
+        pending[post_id]["stage"] = "draft"
+        save_pending(pending)
+
+        header = build_draft_header(pending[post_id])
+
+        await context.bot.send_message(
+            chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+            text=header + text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=draft_keyboard(post_id),
+            disable_web_page_preview=True,
+        )
+        logger.info(f"Draft generated for {post_id}")
+
+    except Exception as e:
+        logger.error(f"Generate error: {e}")
+        await context.bot.send_message(
+            chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+            text=f"❌ Ошибка генерации: {e}",
+        )
+
+
 async def on_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Опубликовать готовый пост в канал."""
     query = update.callback_query
     await query.answer()
 
@@ -260,6 +365,7 @@ async def on_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def on_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Пропустить тему или пост."""
     query = update.callback_query
     await query.answer()
 
@@ -272,14 +378,15 @@ async def on_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await query.edit_message_text(
         query.message.text + "\n\n❌ <i>Пропущено</i>",
         parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
     )
     logger.info(f"Skipped post {post_id}")
 
 
 async def on_next(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Показать следующий пост из того же слота."""
+    """Показать следующую тему из того же слота."""
     query = update.callback_query
-    await query.answer("Ищу следующий пост...")
+    await query.answer("Ищу следующую тему...")
 
     post_id = query.data.removeprefix("next_")
     pending = load_pending()
@@ -292,14 +399,14 @@ async def on_next(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     post_format = post.get("post_format", "morning_insight")
     seen = load_seen()
 
-    # Пометить текущий как пропущенный
     if post_id in pending:
         del pending[post_id]
         save_pending(pending)
 
     await query.edit_message_text(
-        query.message.text + "\n\n⏭ <i>Загружаю следующий...</i>",
+        query.message.text + "\n\n⏭ <i>Загружаю следующую тему...</i>",
         parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
     )
 
     try:
@@ -308,22 +415,23 @@ async def on_next(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not candidates:
             await context.bot.send_message(
                 chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
-                text="😔 Больше новых постов для этого слота нет. Попробуй позже.",
+                text="😔 Больше новых тем для этого слота нет. Попробуй позже.",
             )
             return
 
         item = random.choice(candidates[:5])
-        await _send_draft(context, item)
+        await _send_topic(context, item)
 
     except Exception as e:
-        logger.error(f"Next post error: {e}")
+        logger.error(f"Next topic error: {e}")
         await context.bot.send_message(
             chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
-            text=f"❌ Ошибка при загрузке следующего поста: {e}",
+            text=f"❌ Ошибка при загрузке следующей темы: {e}",
         )
 
 
 async def on_rewrite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Переписать пост заново."""
     query = update.callback_query
     await query.answer()
 
@@ -335,7 +443,11 @@ async def on_rewrite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await query.edit_message_text("⚠️ Пост не найден.")
         return
 
-    await query.edit_message_text("🔄 Переписываю пост... подождите немного")
+    await query.edit_message_text(
+        build_draft_header(post) + (post.get("text") or "") + "\n\n🔄 <i>Переписываю...</i>",
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
 
     try:
         item = ContentItem(
@@ -349,23 +461,30 @@ async def on_rewrite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         new_text = transform(item)
         if not new_text:
-            await query.edit_message_text("❌ Не удалось переписать. Попробуйте ещё раз.")
+            await context.bot.send_message(
+                chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+                text="❌ Не удалось переписать. Попробуйте ещё раз.",
+            )
             return
 
         pending[post_id]["text"] = new_text
         save_pending(pending)
 
-        header = build_header(pending[post_id])
-        await query.edit_message_text(
-            header + new_text + "\n\n<i>(переписан)</i>",
+        header = build_draft_header(pending[post_id])
+        await context.bot.send_message(
+            chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+            text=header + new_text + "\n\n<i>(переписан)</i>",
             parse_mode=ParseMode.HTML,
-            reply_markup=approval_keyboard(post_id),
+            reply_markup=draft_keyboard(post_id),
             disable_web_page_preview=True,
         )
         logger.info(f"Rewritten post {post_id}")
 
     except Exception as e:
-        await query.edit_message_text(f"❌ Ошибка: {e}")
+        await context.bot.send_message(
+            chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+            text=f"❌ Ошибка: {e}",
+        )
         logger.error(f"Rewrite error: {e}")
 
 
@@ -385,7 +504,7 @@ async def on_edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
     await query.message.reply_text(
         f"✏️ <b>Редактирование</b>\n\n"
-        f"<i>Текущий текст:</i>\n{post['text']}\n\n"
+        f"<i>Текущий текст:</i>\n{post.get('text', '')}\n\n"
         f"Отправь новый текст или /cancel для отмены.",
         parse_mode=ParseMode.HTML,
     )
@@ -407,11 +526,11 @@ async def on_edit_receive(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     save_pending(pending)
     context.user_data.pop("editing_post_id", None)
 
-    header = build_header(pending[post_id])
+    header = build_draft_header(pending[post_id])
     await update.message.reply_text(
         header + new_text,
         parse_mode=ParseMode.HTML,
-        reply_markup=approval_keyboard(post_id),
+        reply_markup=draft_keyboard(post_id),
         disable_web_page_preview=True,
     )
     return ConversationHandler.END
@@ -438,10 +557,11 @@ def main() -> None:
     )
 
     app.add_handler(conv)
-    app.add_handler(CallbackQueryHandler(on_approve, pattern=r"^approve_"))
-    app.add_handler(CallbackQueryHandler(on_skip,    pattern=r"^skip_"))
-    app.add_handler(CallbackQueryHandler(on_rewrite, pattern=r"^rewrite_"))
-    app.add_handler(CallbackQueryHandler(on_next,    pattern=r"^next_"))
+    app.add_handler(CallbackQueryHandler(on_generate, pattern=r"^generate_"))
+    app.add_handler(CallbackQueryHandler(on_approve,  pattern=r"^approve_"))
+    app.add_handler(CallbackQueryHandler(on_skip,     pattern=r"^skip_"))
+    app.add_handler(CallbackQueryHandler(on_rewrite,  pattern=r"^rewrite_"))
+    app.add_handler(CallbackQueryHandler(on_next,     pattern=r"^next_"))
 
     # Расписание (UTC, Бали = UTC+8)
     jq = app.job_queue
@@ -452,17 +572,15 @@ def main() -> None:
 
     # Тестовый запуск через 5 секунд после старта
     async def startup_test(ctx: ContextTypes.DEFAULT_TYPE):
-        logger.info("Startup test — sending morning insight...")
+        logger.info("Startup test — sending morning insight topic...")
         await run_slot(ctx, "morning_insight")
 
     jq.run_once(startup_test, when=5)
 
     logger.info("=" * 55)
-    logger.info("Bot started! Schedule (Bali UTC+8):")
-    logger.info("  09:00 daily       — Morning Insight  #мысливслух")
-    logger.info("  11:00 Tue/Thu/Sat — Tool             #полезняшка")
-    logger.info("  14:00 daily       — Afternoon Practice #воронкиипродажи")
-    logger.info("  19:00 daily       — Evening Case     #разборкейса")
+    logger.info("Bot started! 2-stage moderation mode.")
+    logger.info("  Stage 1: Topic + Original link → approve/skip/next")
+    logger.info("  Stage 2: Generated draft → publish/rewrite/edit/skip")
     logger.info(f"  Channel: {config.TELEGRAM_CHANNEL_ID}")
     logger.info(f"  Admin:   {config.TELEGRAM_ADMIN_CHAT_ID}")
     logger.info("=" * 55)
