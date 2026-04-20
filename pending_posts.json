@@ -1,22 +1,12 @@
 {
-  "morning_insight_2937799364709284634": {
-    "text": "[контекст]  \nзнаете, последние пару дней у меня та же фигня с чатботами — лимиты стали жёстче, быстрее кончается возможность использовать их.\n\n*________*  \n[почему это важно]  \nэто прям сигнал для всех, кто строит продажи в автомате — нельзя зависеть от одного инструмента, даже если он кайфовый и сэкономил кучу времени.\n\n*________*  \n[итог]  \nтакс, план б и гибкость — наше всё, на всякий случай. а вы так делаете? 🤩  \n#мысливслух",
-    "title": "Ask HN: Did Claude lowered its usage limits?",
+  "morning_insight_4947002083038701310": {
+    "text": "[контекст]  \nтакс, вы видели, как меняются правила игры из-за технологий? 80 лет назад в музыке главный был не исполнитель, а глава профсоюза, который переписал, кому и сколько платить за творчество.  \n\n[что делать]  \nв бизнесе то же самое — не только продукт важен, но и как вы строите взаимоотношения с партнёрами и клиентами, особенно по деньгам и обязательствам. пересмотрите свои договорённости, кто и когда получает оплату, чтобы не остаться в шоке через пару месяцев.  \n\n[итог]  \nтехнологии меняют не только как продаёшь, но и как считаешь деньги. а вы так делаете?  \n\n#мысливслух 💙",
+    "title": "The Petrillo complications",
     "post_format": "morning_insight",
-    "source": "Hacker News (Ask HN)",
-    "url": "https://news.ycombinator.com/item?id=47832448",
-    "summary": "<p>For a last few days, I keep hitting chat limits on Sonnet 4.6 and I perceive it to be like 5-10x faster to hit the limit than it used to a week ago. What happened? Do you also experience it?</p>\n<hr />\n<p>Comments URL: <a href=\"https://news.ycombinator.com/item?id=47832448\">https://news.ycombinator.com/item?id=47832448</a></p>\n<p>Points: 4</p>\n<p># Comments: 1</p>",
+    "source": "Seth Godin",
+    "url": "https://feeds.feedblitz.com/~/954039311/0/sethsblog~The-Petrillo-complications/",
+    "summary": "80 years ago, the most important person in the music business was James Petrillo. It&#8217;s difficult to imagine the head of the musician&#8217;s union on the cover of Time magazine, but there he was. Petrillo saw how technology was changing an industry and pushed for changes in the flow of credit and royalties. The story [&#8230;]<div style=\"clear: both; padding-top: 0.2em;\"><a href=\"https://feeds.feedblitz.com/_/2/954039311/SethsBlog\" title=\"Add to FaceBook\"><img height=\"20\" src=\"https://assets.feedblitz.com/i/fbshare20.png\" style=\"border: 0; margin: 0; padding: 0;\" /></a>&#160;<a href=\"https://feeds.feedblitz.com/_/28/954039311/SethsBlog\" title=\"Like on Facebook\"><img height=\"20\" src=\"https://assets.feedblitz.com/i/fblike20.png\" style=\"border: 0; margin: 0; padding: 0;\" /></a>&#160;<a ",
     "hashtag": "#мысливслух",
-    "published": "20.04.2026"
-  },
-  "morning_insight_3448753451759379533": {
-    "text": "[контекст]  \nтакс, вчера натыкаюсь на историю — люди проходят проверку, что они не боты, через какой-то внешний сайт. при этом ссылка как будто специально отмечает их комментарий и юзернейм... и потом комментарий удаляют. вы видели такое?  \n\n*________*  \n\n[почему это важно]  \nвот вам инсайт: если бизнес или сервис перегибает с \"безопасностью\" и начинает таскать данные клиентов туда-сюда, не контролируя процесс — клиент быстро уходит в шоке. в микробизнесе особенно кайф — прозрачность и простота решают всё. а эти заморочки с приватностью и кучей лишних движений — наоборот, убивают доверие.  \n\n*________*  \n\n[итог]  \nделайте так, чтобы клиенту было просто и понятно. не усложняйте, не гоняйте по внешним сайтам и лишним шагам. лучше потратите время на кайфовые продажи и нормальную операционку. а вы так делаете? 💙  \n\n#мысливслух",
-    "title": "Ask HN: Scanslop.com on Reddit a Privacy Nightmare?",
-    "post_format": "morning_insight",
-    "source": "Hacker News (Ask HN)",
-    "url": "https://news.ycombinator.com/item?id=47831237",
-    "summary": "<p>Hello!<p>On one of the subreddits i comment on i was recently asked to verify i'm not an AI agent through scanslop.com, by having to complete a challenge through an url like this: https://scanslop.com/c/<p>I completed the challenge but only after i realized that i was effectively directed to an external website (not controlled by reddit) with an URL that is essentially an identifier for a comment i just left.<p>Btw, the comment where i was asked to complete the challenge was removed immediately after the challenge was completed.<p>As scanslop has a reference to my comment (with my username) and a request from my browser, this means that scanslop can essentially associate reddit usernames with ip addresses.<p>Did anyone else notice this, am i the only one that has noticed the privacy nig",
-    "hashtag": "#мысливслух",
-    "published": "20.04.2026"
+    "published": "19.04.2026"
   }
 }

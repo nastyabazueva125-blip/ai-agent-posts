@@ -36,82 +36,26 @@ class ContentItem:
 # ─── RSS-ленты по форматам ─────────────────────────────────────────────────
 
 RSS_SOURCES = {
-    # Утренний инсайт — мысли о бизнесе и мышлении
     "morning_insight": [
-        {
-            "name": "Sahil Bloom (Curiosity Chronicle)",
-            "url": "https://www.sahilbloom.com/newsletter/rss.xml",
-            "hashtag": "#мысливслух",
-        },
-        {
-            "name": "James Clear (Atomic Habits)",
-            "url": "https://jamesclear.com/feed",
-            "hashtag": "#мысливслух",
-        },
-        {
-            "name": "Paul Graham Essays",
-            "url": "https://www.aaronsw.com/2002/feeds/pgessays.rss",
-            "hashtag": "#мысливслух",
-        },
+        {"name": "Sahil Bloom", "url": "https://www.sahilbloom.com/newsletter/rss.xml", "hashtag": "#мысливслух"},
+        {"name": "Seth Godin", "url": "https://feeds.feedblitz.com/sethsblog", "hashtag": "#мысливслух"},
+        {"name": "Duct Tape Marketing", "url": "https://ducttapemarketing.com/feed/", "hashtag": "#мысливслух"},
     ],
-    # Дневной пост — практика, воронки, операционка
     "afternoon_practice": [
-        {
-            "name": "Justin Welsh (Saturday Solopreneur)",
-            "url": "https://www.justinwelsh.me/rss",
-            "hashtag": "#воронкиипродажи",
-        },
-        {
-            "name": "Growth Unhinged",
-            "url": "https://www.growthunhinged.com/feed",
-            "hashtag": "#воронкиипродажи",
-        },
-        {
-            "name": "Lenny's Newsletter",
-            "url": "https://www.lennysnewsletter.com/feed",
-            "hashtag": "#операционка",
-        },
-        {
-            "name": "HubSpot Marketing Blog",
-            "url": "https://blog.hubspot.com/marketing/rss.xml",
-            "hashtag": "#воронкиипродажи",
-        },
+        {"name": "Neil Patel", "url": "https://neilpatel.com/blog/feed/", "hashtag": "#воронкиипродажи"},
+        {"name": "HubSpot Sales", "url": "https://blog.hubspot.com/sales/rss.xml", "hashtag": "#воронкиипродажи"},
+        {"name": "Smart Passive Income", "url": "https://www.smartpassiveincome.com/blog/feed/", "hashtag": "#операционка"},
+        {"name": "Demand Curve", "url": "https://www.demandcurve.com/blog/rss.xml", "hashtag": "#воронкиипродажи"},
     ],
-    # Вечерний кейс — разборы бизнесов и стратегий
     "evening_case": [
-        {
-            "name": "Codie Sanchez (Contrarian Thinking)",
-            "url": "https://www.contrarianthinking.co/feed",
-            "hashtag": "#разборкейса",
-        },
-        {
-            "name": "Indie Hackers",
-            "url": "https://www.indiehackers.com/feed.rss",
-            "hashtag": "#разборкейса",
-        },
-        {
-            "name": "First Round Review",
-            "url": "https://review.firstround.com/feed.xml",
-            "hashtag": "#разборкейса",
-        },
+        {"name": "Trends.vc", "url": "https://trends.vc/feed/", "hashtag": "#разборкейса"},
+        {"name": "Inc Magazine", "url": "https://www.inc.com/rss/homepage.xml", "hashtag": "#разборкейса"},
+        {"name": "Backlinko", "url": "https://backlinko.com/feed", "hashtag": "#разборкейса"},
     ],
-    # Полезняшка — AI-инструменты и сервисы
     "tool": [
-        {
-            "name": "Product Hunt (AI Tools)",
-            "url": "https://www.producthunt.com/feed?category=artificial-intelligence",
-            "hashtag": "#полезняшка",
-        },
-        {
-            "name": "Ben's Bites (AI Newsletter)",
-            "url": "https://bensbites.beehiiv.com/feed",
-            "hashtag": "#aiдлябизнеса",
-        },
-        {
-            "name": "The Rundown AI",
-            "url": "https://www.therundown.ai/rss",
-            "hashtag": "#aiдлябизнеса",
-        },
+        {"name": "Zapier Blog", "url": "https://zapier.com/blog/feeds/latest/", "hashtag": "#полезняшка"},
+        {"name": "Buffer Blog", "url": "https://buffer.com/resources/feed/", "hashtag": "#полезняшка"},
+        {"name": "Product Hunt AI", "url": "https://www.producthunt.com/feed?category=artificial-intelligence", "hashtag": "#aiдлябизнеса"},
     ],
 }
 

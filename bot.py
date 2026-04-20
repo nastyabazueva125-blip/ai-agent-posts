@@ -89,6 +89,17 @@ def save_pending(pending: dict) -> None:
 def build_header(post: dict) -> str:
     """Строим шапку сообщения с источником, датой и ссылкой на оригинал."""
     label = SLOT_LABELS.get(post.get("post_format", ""), "📋 Черновик")
+    
+    categories = {
+        "#мысливслух": "Мышление и Подход",
+        "#воронкиипродажи": "Продажи и Маркетинг",
+        "#операционка": "Управление и Процессы",
+        "#разборкейса": "Бизнес-разбор",
+        "#полезняшка": "Инструменты для бизнеса",
+        "#aiдлябизнеса": "Нейросети для SMB",
+    }
+    category = categories.get(post.get("hashtag", ""), "Практика для бизнеса")
+    
     source = post.get("source", "")
     published = post.get("published", "")
     url = post.get("url", "")
@@ -98,7 +109,7 @@ def build_header(post: dict) -> str:
     if url:
         source_line += f'\n🔗 <a href="{url}">Оригинал</a>'
 
-    return f"<b>{label}</b>\n{source_line}\n\n"
+    return f"<b>{label}</b> | 📂 {category}\n{source_line}\n\n"
 
 
 def approval_keyboard(post_id: str) -> InlineKeyboardMarkup:
