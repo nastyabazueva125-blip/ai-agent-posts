@@ -1,7 +1,8 @@
 """
-content_sources.py — модуль сбора контента из RSS-лент и AI-директорий.
-Источники: Justin Welsh, Codie Sanchez, Sahil Bloom, Growth Unhinged,
-           Alex Hormozi (YouTube RSS), Product Hunt, TheresAnAIForThat
+content_sources.py — модуль сбора контента из RSS-лент и блогов.
+Источники: Lenny Rachitsky, First 1000, Noah Kagan, Duct Tape Marketing,
+           Smart Passive Income, HubSpot, Trends.vc, YC Blog, SaaStr,
+           Zapier Blog, Product Hunt AI, Almost Timely
 
 Фильтрация: берём только посты за последние 7 дней.
 """
@@ -37,25 +38,31 @@ class ContentItem:
 
 RSS_SOURCES = {
     "morning_insight": [
-        {"name": "Sahil Bloom", "url": "https://www.sahilbloom.com/newsletter/rss.xml", "hashtag": "#мысливслух"},
-        {"name": "Seth Godin", "url": "https://feeds.feedblitz.com/sethsblog", "hashtag": "#мысливслух"},
-        {"name": "Duct Tape Marketing", "url": "https://ducttapemarketing.com/feed/", "hashtag": "#мысливслух"},
+        # Практичные мысли про бизнес и рост — без воды
+        {"name": "Lenny's Newsletter", "url": "https://www.lennysnewsletter.com/feed", "hashtag": "#мысливслух"},
+        {"name": "First 1000 (Ali Abouelatta)", "url": "https://read.first1000.co/feed", "hashtag": "#мысливслух"},
+        {"name": "Noah Kagan (AppSumo)", "url": "https://noahkagan.com/feed/", "hashtag": "#мысливслух"},
+        {"name": "The Strategy Stack", "url": "https://thestrategystack.substack.com/feed", "hashtag": "#мысливслух"},
     ],
     "afternoon_practice": [
-        {"name": "Neil Patel", "url": "https://neilpatel.com/blog/feed/", "hashtag": "#воронкиипродажи"},
-        {"name": "HubSpot Sales", "url": "https://blog.hubspot.com/sales/rss.xml", "hashtag": "#воронкиипродажи"},
-        {"name": "Smart Passive Income", "url": "https://www.smartpassiveincome.com/blog/feed/", "hashtag": "#операционка"},
-        {"name": "Demand Curve", "url": "https://www.demandcurve.com/blog/rss.xml", "hashtag": "#воронкиипродажи"},
+        # Воронки, продажи, операционка — конкретные советы для SMB
+        {"name": "Smart Passive Income", "url": "https://www.smartpassiveincome.com/feed/", "hashtag": "#операционка"},
+        {"name": "Almost Timely (AI for biz)", "url": "https://almosttimely.substack.com/feed", "hashtag": "#aiдлябизнеса"},
+        {"name": "Zapier Blog", "url": "https://zapier.com/blog/feeds/latest/", "hashtag": "#операционка"},
+        {"name": "The Strategy Stack", "url": "https://thestrategystack.substack.com/feed", "hashtag": "#воронкиипродажи"},
     ],
     "evening_case": [
+        # Реальные кейсы бизнесов и разборы трендов
         {"name": "Trends.vc", "url": "https://trends.vc/feed/", "hashtag": "#разборкейса"},
-        {"name": "Inc Magazine", "url": "https://www.inc.com/rss/homepage.xml", "hashtag": "#разборкейса"},
-        {"name": "Backlinko", "url": "https://backlinko.com/feed", "hashtag": "#разборкейса"},
+        {"name": "YC Blog", "url": "https://www.ycombinator.com/blog/rss.xml", "hashtag": "#разборкейса"},
+        {"name": "SaaStr", "url": "https://www.saastr.com/feed/", "hashtag": "#разборкейса"},
+        {"name": "First Round Review", "url": "https://review.firstround.com/feed.xml", "hashtag": "#разборкейса"},
     ],
     "tool": [
+        # Свежие AI-инструменты и автоматизация для бизнеса
         {"name": "Zapier Blog", "url": "https://zapier.com/blog/feeds/latest/", "hashtag": "#полезняшка"},
-        {"name": "Buffer Blog", "url": "https://buffer.com/resources/feed/", "hashtag": "#полезняшка"},
         {"name": "Product Hunt AI", "url": "https://www.producthunt.com/feed?category=artificial-intelligence", "hashtag": "#aiдлябизнеса"},
+        {"name": "a16z AI", "url": "https://a16z.com/feed/", "hashtag": "#aiдлябизнеса"},
     ],
 }
 
