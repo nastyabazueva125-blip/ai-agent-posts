@@ -8,6 +8,7 @@ AI Content Curator Bot для @bazuevaconsalt
   19:00 — Кейс/Сторителлинг      (#разборкейса)
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -169,14 +170,26 @@ async def _send_draft(context: ContextTypes.DEFAULT_TYPE, item: ContentItem) -> 
     save_pending(pending)
 
     header = build_header(pending[post_id])
-    await context.bot.send_message(
-        chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
-        text=header + text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=approval_keyboard(post_id),
-        disable_web_page_preview=True,
-    )
-    logger.info(f"Draft sent for slot {item.post_format}: {post_id}")
+
+    # Retry up to 3 times on network errors
+    for attempt in range(3):
+        try:
+            await context.bot.send_message(
+                chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+                text=header + text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=approval_keyboard(post_id),
+                disable_web_page_preview=True,
+            )
+            logger.info(f"Draft sent for slot {item.post_format}: {post_id}")
+            break
+        except Exception as e:
+            if attempt < 2:
+                logger.warning(f"Send attempt {attempt+1} failed: {e} — retrying in 5s")
+                await asyncio.sleep(5)
+            else:
+                logger.error(f"Failed to send draft after 3 attempts: {e}")
+                raise
 
 
 # ─── Scheduled jobs ───────────────────────────────────────────────────────
