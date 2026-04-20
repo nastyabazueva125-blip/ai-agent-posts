@@ -202,32 +202,69 @@ POST_FROM_SUMMARY_PROMPT = """у тебя есть заголовок и кра�
 """
 
 
+# Промпт для постов из Telegram-каналов (текст уже на русском)
+POST_FROM_TG_PROMPT = """у тебя есть пост из русскоязычного телеграм-канала.
+напиши на его основе пост для телеграм-канала @bazuevaconsalt о бизнесе и маркетинге.
+
+требования к посту:
+- язык: живой разговорный русский, без официоза
+- длина: 150-250 слов
+- структура: цепляющий заход → главная мысль → 2-3 конкретных тезиса или примера → вывод
+- стиль: строчные буквы в начале абзацев (кроме имён собственных), рубленые фразы
+- переосмысли и адаптируй под аудиторию предпринимателей малого бизнеса
+- не копируй дословно — это должен быть твой взгляд на тему
+- не добавляй "подписывайтесь" и призывы к действию
+- в конце добавь хештег: {hashtag}
+
+исходный пост:
+АВТОР: {source}
+
+ТЕКСТ:
+{text}
+"""
+
+
+def _is_tg_url(url: str) -> bool:
+    """Проверить, является ли URL ссылкой на Telegram-пост."""
+    return "t.me/" in url
+
+
 def transform(item: ContentItem) -> str:
     """Загрузить полный текст статьи и написать пост для Telegram-канала."""
 
-    # Пробуем загрузить полный текст по URL
-    full_text = _fetch_full_text(item.url)
-
-    if full_text:
-        # Есть полный текст — пишем пост на его основе
-        prompt = POST_FROM_FULL_TEXT_PROMPT.format(
-            title=item.title,
+    # Если это пост из TG-канала — текст уже в summary, не нужно скачивать
+    if _is_tg_url(item.url) and item.summary and len(item.summary) >= 80:
+        logger.info(f"TG post, using summary directly: {item.title[:50]}")
+        prompt = POST_FROM_TG_PROMPT.format(
             source=item.source,
-            full_text=full_text[:MAX_TEXT_CHARS],
+            text=item.summary[:3000],
             hashtag=item.hashtag,
         )
-        max_tokens = 800
-        logger.info(f"Using full text ({len(full_text)} chars) for: {item.title[:50]}")
+        max_tokens = 700
     else:
-        # Нет полного текста (paywall/ошибка) — пишем по RSS summary
-        logger.info(f"Using RSS summary for: {item.title[:50]}")
-        prompt = POST_FROM_SUMMARY_PROMPT.format(
-            title=item.title,
-            source=item.source,
-            summary=item.summary[:2000] if item.summary else "(нет описания)",
-            hashtag=item.hashtag,
-        )
-        max_tokens = 600
+        # Пробуем загрузить полный текст по URL
+        full_text = _fetch_full_text(item.url)
+
+        if full_text:
+            # Есть полный текст — пишем пост на его основе
+            prompt = POST_FROM_FULL_TEXT_PROMPT.format(
+                title=item.title,
+                source=item.source,
+                full_text=full_text[:MAX_TEXT_CHARS],
+                hashtag=item.hashtag,
+            )
+            max_tokens = 800
+            logger.info(f"Using full text ({len(full_text)} chars) for: {item.title[:50]}")
+        else:
+            # Нет полного текста (paywall/ошибка) — пишем по RSS summary
+            logger.info(f"Using RSS summary for: {item.title[:50]}")
+            prompt = POST_FROM_SUMMARY_PROMPT.format(
+                title=item.title,
+                source=item.source,
+                summary=item.summary[:2000] if item.summary else "(нет описания)",
+                hashtag=item.hashtag,
+            )
+            max_tokens = 600
 
     try:
         response = client.chat.completions.create(

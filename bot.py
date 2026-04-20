@@ -36,6 +36,7 @@ import config
 from content_sources import fetch_for_slot, ContentItem
 from content_transformer import transform, translate_title
 from card_generator import generate_card
+from telegram_scraper import fetch_all_tg_channels
 
 logging.basicConfig(
     level=logging.INFO,
@@ -59,6 +60,7 @@ SLOT_LABELS = {
     "afternoon_practice": "📚 Практика",
     "evening_case":       "🌙 Кейс",
     "tool":               "🛠 Инструмент",
+    "tg_channel":         "💬 TG-канал",
 }
 
 CATEGORIES = {
@@ -147,30 +149,71 @@ def draft_keyboard(post_id: str) -> InlineKeyboardMarkup:
 # ─── Digest builder ───────────────────────────────────────────────────────
 
 def _build_digest_blocking() -> list:
-    """Синхронная функция: собрать 10 тем и перевести заголовки."""
+    """Синхронная функция: собрать 10 тем и перевести заголовки.
+    
+    Структура дайджеста:
+      - 3 темы из Telegram-каналов-референсов (гарантировано)
+      - 7 тем из RSS-источников
+    """
     seen = load_seen()
-    all_items = []
 
+    # ── 1. Собираем посты из TG-каналов (гарантированные 3 темы) ──────────
+    tg_items = []
+    try:
+        all_tg = fetch_all_tg_channels(max_per_channel=5)
+        fresh_tg = [i for i in all_tg if i.url not in seen]
+        # Берём не более 3, стараемся взять из разных каналов
+        seen_sources = set()
+        for item in fresh_tg:
+            if item.source not in seen_sources:
+                tg_items.append(item)
+                seen_sources.add(item.source)
+            if len(tg_items) >= 3:
+                break
+        # Если разных каналов мало — добираем из оставшихся
+        if len(tg_items) < 3:
+            for item in fresh_tg:
+                if item not in tg_items:
+                    tg_items.append(item)
+                if len(tg_items) >= 3:
+                    break
+        logger.info(f"TG channels: {len(tg_items)} items selected for digest")
+    except Exception as e:
+        logger.error(f"TG channels fetch failed: {e}")
+
+    # ── 2. Собираем RSS-посты (7 тем) ─────────────────────────────────────
+    rss_items = []
+    tg_urls = {i.url for i in tg_items}
     slots = ["morning_insight", "afternoon_practice", "evening_case", "tool"]
     for slot in slots:
         try:
             items = fetch_for_slot(slot, max_items=8)
-            fresh = [i for i in items if i.url not in seen]
-            all_items.extend(fresh[:4])
+            fresh = [i for i in items if i.url not in seen and i.url not in tg_urls]
+            rss_items.extend(fresh[:4])
             logger.info(f"Slot {slot}: {len(fresh)} fresh items")
         except Exception as e:
             logger.error(f"Error fetching slot {slot}: {e}")
 
-    # Убираем дубли по URL
-    seen_urls = set()
-    unique_items = []
-    for item in all_items:
+    # Убираем дубли по URL среди RSS
+    seen_urls = set(tg_urls)
+    unique_rss = []
+    for item in rss_items:
         if item.url not in seen_urls:
             seen_urls.add(item.url)
-            unique_items.append(item)
+            unique_rss.append(item)
 
-    random.shuffle(unique_items)
-    selected = unique_items[:10]
+    random.shuffle(unique_rss)
+    rss_selected = unique_rss[:7]
+
+    # ── 3. Собираем финальный список: TG первыми, затем RSS ───────────────
+    selected = tg_items + rss_selected
+    if not selected:
+        logger.warning("No fresh items found for digest!")
+        return []
+    
+    # Перемешиваем чтобы TG-посты не были всегда в начале
+    random.shuffle(selected)
+    selected = selected[:10]
 
     if not selected:
         logger.warning("No fresh items found for digest!")
