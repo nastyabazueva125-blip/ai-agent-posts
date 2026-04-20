@@ -1,7 +1,7 @@
 """
-content_transformer.py — перевод полного текста статьи на нативный русский.
-Использует requests+BeautifulSoup для извлечения полного текста по URL,
-затем GPT-4.1-mini для точного перевода.
+content_transformer.py — перевод/адаптация статьи на русский язык для Telegram-канала.
+Загружает полный текст через requests+BeautifulSoup.
+Если текст недоступен (paywall, слишком короткий) — использует RSS summary.
 """
 
 import logging
@@ -16,14 +16,50 @@ client = OpenAI()  # API key и base_url из окружения
 
 MAX_TEXT_CHARS = 6000  # ~4000 токенов — достаточно для полного поста
 
+# Минимальная длина текста чтобы считать его полноценным (не paywall-заглушкой)
+MIN_USEFUL_TEXT_CHARS = 800
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 }
 
+# Признаки paywall / закрытого контента
+PAYWALL_SIGNALS = [
+    "subscribers only",
+    "for subscribers",
+    "paid subscribers",
+    "subscribe to read",
+    "subscribe to continue",
+    "this post is for paying subscribers",
+    "this post is for paid subscribers",
+    "только для подписчиков",
+    "платным подписчикам",
+    "sign in to read",
+    "login to read",
+    "create a free account",
+    "unlock this post",
+    "members only",
+    "premium content",
+]
+
+
+def _has_paywall(text: str) -> bool:
+    """Проверить, является ли текст paywall-заглушкой."""
+    text_lower = text.lower()
+    for signal in PAYWALL_SIGNALS:
+        if signal in text_lower:
+            return True
+    return False
+
 
 def _fetch_full_text(url: str) -> str:
-    """Загрузить полный текст статьи по URL через requests + BeautifulSoup."""
+    """Загрузить полный текст статьи по URL через requests + BeautifulSoup.
+    
+    Возвращает пустую строку если:
+    - не удалось загрузить
+    - текст слишком короткий (paywall/заглушка)
+    - обнаружены признаки paywall
+    """
     try:
         r = requests.get(url, headers=HEADERS, timeout=12)
         r.raise_for_status()
@@ -36,19 +72,32 @@ def _fetch_full_text(url: str) -> str:
         # Ищем основной контент
         content = (
             soup.find('article') or
-            soup.find('div', class_=lambda c: c and any(x in c.lower() for x in ['post-content', 'article-body', 'entry-content', 'post-body', 'content-body', 'prose'])) or
+            soup.find('div', class_=lambda c: c and any(x in c.lower() for x in [
+                'post-content', 'article-body', 'entry-content', 'post-body',
+                'content-body', 'prose', 'article-content', 'post__content'
+            ])) or
             soup.find('main') or
             soup.find('body')
         )
 
         if content:
             text = content.get_text(separator='\n', strip=True)
-            # Убираем пустые строки
             lines = [l.strip() for l in text.splitlines() if len(l.strip()) > 30]
             text = '\n'.join(lines)
-            if len(text) > 300:
-                logger.info(f"Full text fetched: {len(text)} chars from {url[:60]}")
-                return text
+
+            # Проверяем на paywall
+            if _has_paywall(text):
+                logger.info(f"Paywall detected for {url[:60]} — falling back to RSS summary")
+                return ""
+
+            # Проверяем минимальную длину
+            if len(text) < MIN_USEFUL_TEXT_CHARS:
+                logger.info(f"Text too short ({len(text)} chars) for {url[:60]} — likely paywall/preview")
+                return ""
+
+            logger.info(f"Full text fetched: {len(text)} chars from {url[:60]}")
+            return text
+
     except Exception as e:
         logger.warning(f"Full text fetch failed for {url[:60]}: {e}")
     return ""
@@ -96,7 +145,6 @@ def translate_title(title: str, summary: str) -> dict:
         )
         text = response.choices[0].message.content.strip()
 
-        # Парсим ответ
         ru_title = title  # fallback
         ru_desc = summary[:100] if summary else ""
 
@@ -113,19 +161,21 @@ def translate_title(title: str, summary: str) -> dict:
         return {"title": title, "description": summary[:100] if summary else ""}
 
 
-TRANSLATE_PROMPT = """переведи этот материал на русский язык.
+# ─── Промпты для генерации поста ──────────────────────────────────────────
 
-требования к переводу:
-- переводи максимально точно и близко к оригиналу, не переосмысляй
-- язык должен быть живым и нативным — не "машинным" и не "официальным"
-- сохраняй структуру оригинала: абзацы, списки, заголовки
-- термины переводи по смыслу (например: "funnel" → "воронка", "churn" → "отток клиентов", "revenue" → "выручка")
-- если в оригинале есть цифры, примеры, кейсы — сохраняй их все
-- не добавляй ничего от себя, не делай выводов которых нет в оригинале
-- не сокращай текст — переводи полностью
-- в самом конце добавь хештег: {hashtag}
+POST_FROM_FULL_TEXT_PROMPT = """у тебя есть полный текст статьи на английском. 
+напиши на его основе пост для телеграм-канала о бизнесе и маркетинге.
 
-материал для перевода:
+требования к посту:
+- язык: живой разговорный русский, без официоза
+- длина: 150-300 слов — не больше, не меньше
+- структура: короткий цепляющий заход → главная мысль/идея → 2-3 конкретных тезиса или примера → вывод/мысль для читателя
+- стиль: строчные буквы в начале абзацев (кроме имён собственных), рубленые фразы
+- не пересказывай всё подряд — выбери самое ценное и интересное
+- не добавляй "подписывайтесь" и призывы к действию
+- в конце добавь хештег: {hashtag}
+
+материал:
 ЗАГОЛОВОК: {title}
 ИСТОЧНИК: {source}
 
@@ -133,49 +183,51 @@ TRANSLATE_PROMPT = """переведи этот материал на русск
 {full_text}
 """
 
-TRANSLATE_SUMMARY_PROMPT = """переведи этот материал на русский язык.
+POST_FROM_SUMMARY_PROMPT = """у тебя есть заголовок и краткое описание статьи на английском.
+напиши на их основе пост для телеграм-канала о бизнесе и маркетинге.
 
-требования к переводу:
-- переводи максимально точно и близко к оригиналу, не переосмысляй
-- язык должен быть живым и нативным — не "машинным" и не "официальным"
-- сохраняй структуру оригинала: абзацы, списки, заголовки
-- термины переводи по смыслу
-- если в оригинале есть цифры, примеры, кейсы — сохраняй их все
-- не добавляй ничего от себя
-- в самом конце добавь хештег: {hashtag}
+требования к посту:
+- язык: живой разговорный русский, без официоза
+- длина: 100-200 слов
+- структура: короткий цепляющий заход → главная мысль → 2-3 тезиса → вывод
+- стиль: строчные буквы в начале абзацев (кроме имён собственных), рубленые фразы
+- раскрой тему максимально — домысли детали исходя из заголовка и описания
+- не добавляй "подписывайтесь" и призывы к действию
+- в конце добавь хештег: {hashtag}
 
-материал для перевода:
+материал:
 ЗАГОЛОВОК: {title}
 ИСТОЧНИК: {source}
-ТЕКСТ: {summary}
+ОПИСАНИЕ: {summary}
 """
 
 
 def transform(item: ContentItem) -> str:
-    """Загрузить полный текст статьи и перевести его на русский язык."""
+    """Загрузить полный текст статьи и написать пост для Telegram-канала."""
 
     # Пробуем загрузить полный текст по URL
     full_text = _fetch_full_text(item.url)
 
     if full_text:
-        # Есть полный текст — переводим его
-        prompt = TRANSLATE_PROMPT.format(
+        # Есть полный текст — пишем пост на его основе
+        prompt = POST_FROM_FULL_TEXT_PROMPT.format(
             title=item.title,
             source=item.source,
             full_text=full_text[:MAX_TEXT_CHARS],
             hashtag=item.hashtag,
         )
-        max_tokens = 3000
+        max_tokens = 800
+        logger.info(f"Using full text ({len(full_text)} chars) for: {item.title[:50]}")
     else:
-        # Нет полного текста — переводим summary из RSS
-        logger.info(f"Falling back to RSS summary for: {item.title[:50]}")
-        prompt = TRANSLATE_SUMMARY_PROMPT.format(
+        # Нет полного текста (paywall/ошибка) — пишем по RSS summary
+        logger.info(f"Using RSS summary for: {item.title[:50]}")
+        prompt = POST_FROM_SUMMARY_PROMPT.format(
             title=item.title,
             source=item.source,
-            summary=item.summary[:2000],
+            summary=item.summary[:2000] if item.summary else "(нет описания)",
             hashtag=item.hashtag,
         )
-        max_tokens = 1500
+        max_tokens = 600
 
     try:
         response = client.chat.completions.create(
@@ -184,19 +236,19 @@ def transform(item: ContentItem) -> str:
                 {
                     "role": "system",
                     "content": (
-                        "ты — профессиональный переводчик. твоя задача — точно и живо переводить "
-                        "тексты с английского на русский язык. не добавляй ничего от себя, "
-                        "не переосмысляй, не сокращай. только точный нативный перевод."
+                        "ты — редактор телеграм-канала о бизнесе для предпринимателей. "
+                        "пишешь живые, полезные посты на русском языке. "
+                        "стиль: разговорный, без воды, конкретные мысли и примеры."
                     ),
                 },
                 {"role": "user", "content": prompt},
             ],
             max_tokens=max_tokens,
-            temperature=0.3,
+            temperature=0.5,
         )
         text = response.choices[0].message.content.strip()
-        logger.info(f"Translated [{item.post_format}]: {item.title[:50]}...")
+        logger.info(f"Post generated [{item.post_format}]: {item.title[:50]}...")
         return text
     except Exception as e:
-        logger.error(f"Translation failed: {e}")
+        logger.error(f"Post generation failed: {e}")
         return ""

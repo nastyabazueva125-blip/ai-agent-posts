@@ -1,8 +1,11 @@
 """
 content_sources.py — модуль сбора контента из RSS-лент и блогов.
-Источники: Lenny Rachitsky, First 1000, Noah Kagan, Duct Tape Marketing,
-           Smart Passive Income, HubSpot, Trends.vc, YC Blog, SaaStr,
-           Zapier Blog, Product Hunt AI, Almost Timely
+
+Источники по тематикам:
+  morning_insight  — мышление, стратегия, рост бизнеса (Seth Godin, Lenny, Andrew Chen...)
+  afternoon_practice — маркетинг, трафик, воронки, SEO (Neil Patel, Ahrefs, Buffer, HubSpot...)
+  evening_case     — кейсы компаний, разборы бизнесов (SaaStr, Inc, Fast Company, Sales Hacker...)
+  tool             — инструменты и автоматизация (Zapier, Product Hunt, Intercom...)
 
 Фильтрация: берём только посты за последние 7 дней.
 """
@@ -37,32 +40,120 @@ class ContentItem:
 # ─── RSS-ленты по форматам ─────────────────────────────────────────────────
 
 RSS_SOURCES = {
+    # ── Утро: мышление, стратегия, рост ──────────────────────────────────
     "morning_insight": [
-        # Практичные мысли про бизнес и рост — без воды
-        {"name": "Lenny's Newsletter", "url": "https://www.lennysnewsletter.com/feed", "hashtag": "#мысливслух"},
-        {"name": "First 1000 (Ali Abouelatta)", "url": "https://read.first1000.co/feed", "hashtag": "#мысливслух"},
-        {"name": "Noah Kagan (AppSumo)", "url": "https://noahkagan.com/feed/", "hashtag": "#мысливслух"},
-        {"name": "The Strategy Stack", "url": "https://thestrategystack.substack.com/feed", "hashtag": "#мысливслух"},
+        {
+            "name": "Seth Godin",
+            "url": "https://seths.blog/feed/",
+            "hashtag": "#мысливслух",
+        },
+        {
+            "name": "Lenny's Newsletter",
+            "url": "https://www.lennysnewsletter.com/feed",
+            "hashtag": "#мысливслух",
+        },
+        {
+            "name": "Andrew Chen",
+            "url": "https://andrewchen.com/feed/",
+            "hashtag": "#мысливслух",
+        },
+        {
+            "name": "First 1000 (Ali Abouelatta)",
+            "url": "https://read.first1000.co/feed",
+            "hashtag": "#мысливслух",
+        },
+        {
+            "name": "Intercom Blog",
+            "url": "https://www.intercom.com/blog/feed",
+            "hashtag": "#мысливслух",
+        },
     ],
+
+    # ── Практика: маркетинг, трафик, воронки, SEO ─────────────────────────
     "afternoon_practice": [
-        # Воронки, продажи, операционка — конкретные советы для SMB
-        {"name": "Smart Passive Income", "url": "https://www.smartpassiveincome.com/feed/", "hashtag": "#операционка"},
-        {"name": "Almost Timely (AI for biz)", "url": "https://almosttimely.substack.com/feed", "hashtag": "#aiдлябизнеса"},
-        {"name": "Zapier Blog", "url": "https://zapier.com/blog/feeds/latest/", "hashtag": "#операционка"},
-        {"name": "The Strategy Stack", "url": "https://thestrategystack.substack.com/feed", "hashtag": "#воронкиипродажи"},
+        {
+            "name": "Neil Patel Blog",
+            "url": "https://neilpatel.com/blog/feed/",
+            "hashtag": "#воронкиипродажи",
+        },
+        {
+            "name": "Ahrefs Blog",
+            "url": "https://ahrefs.com/blog/feed/",
+            "hashtag": "#воронкиипродажи",
+        },
+        {
+            "name": "Buffer Blog",
+            "url": "https://buffer.com/resources/feed/",
+            "hashtag": "#воронкиипродажи",
+        },
+        {
+            "name": "HubSpot Sales Blog",
+            "url": "https://blog.hubspot.com/sales/rss.xml",
+            "hashtag": "#воронкиипродажи",
+        },
+        {
+            "name": "Almost Timely (AI for biz)",
+            "url": "https://almosttimely.substack.com/feed",
+            "hashtag": "#aiдлябизнеса",
+        },
     ],
+
+    # ── Вечер: кейсы компаний, разборы, истории роста ─────────────────────
     "evening_case": [
-        # Реальные кейсы бизнесов и разборы трендов
-        {"name": "Trends.vc", "url": "https://trends.vc/feed/", "hashtag": "#разборкейса"},
-        {"name": "YC Blog", "url": "https://www.ycombinator.com/blog/rss.xml", "hashtag": "#разборкейса"},
-        {"name": "SaaStr", "url": "https://www.saastr.com/feed/", "hashtag": "#разборкейса"},
-        {"name": "First Round Review", "url": "https://review.firstround.com/feed.xml", "hashtag": "#разборкейса"},
+        {
+            "name": "SaaStr",
+            "url": "https://www.saastr.com/feed/",
+            "hashtag": "#разборкейса",
+        },
+        {
+            "name": "Sales Hacker",
+            "url": "https://www.saleshacker.com/feed/",
+            "hashtag": "#разборкейса",
+        },
+        {
+            "name": "Inc Magazine",
+            "url": "https://www.inc.com/rss/",
+            "hashtag": "#разборкейса",
+        },
+        {
+            "name": "Fast Company",
+            "url": "https://www.fastcompany.com/latest/rss",
+            "hashtag": "#разборкейса",
+        },
+        {
+            "name": "First Round Review",
+            "url": "https://review.firstround.com/feed.xml",
+            "hashtag": "#разборкейса",
+        },
+        {
+            "name": "YC Blog",
+            "url": "https://www.ycombinator.com/blog/rss.xml",
+            "hashtag": "#разборкейса",
+        },
     ],
+
+    # ── Инструменты: автоматизация, AI-сервисы для бизнеса ────────────────
     "tool": [
-        # Свежие AI-инструменты и автоматизация для бизнеса
-        {"name": "Zapier Blog", "url": "https://zapier.com/blog/feeds/latest/", "hashtag": "#полезняшка"},
-        {"name": "Product Hunt AI", "url": "https://www.producthunt.com/feed?category=artificial-intelligence", "hashtag": "#aiдлябизнеса"},
-        {"name": "a16z AI", "url": "https://a16z.com/feed/", "hashtag": "#aiдлябизнеса"},
+        {
+            "name": "Zapier Blog",
+            "url": "https://zapier.com/blog/feeds/latest/",
+            "hashtag": "#полезняшка",
+        },
+        {
+            "name": "Product Hunt AI",
+            "url": "https://www.producthunt.com/feed?category=artificial-intelligence",
+            "hashtag": "#aiдлябизнеса",
+        },
+        {
+            "name": "Backlinko",
+            "url": "https://backlinko.com/feed",
+            "hashtag": "#полезняшка",
+        },
+        {
+            "name": "a16z AI",
+            "url": "https://a16z.com/feed/",
+            "hashtag": "#aiдлябизнеса",
+        },
     ],
 }
 
@@ -73,28 +164,28 @@ FALLBACK_RSS = {
             "name": "Hacker News (Ask HN)",
             "url": "https://hnrss.org/ask",
             "hashtag": "#мысливслух",
-        }
+        },
     ],
     "afternoon_practice": [
         {
             "name": "Zapier Blog",
             "url": "https://zapier.com/blog/feeds/latest/",
             "hashtag": "#операционка",
-        }
+        },
     ],
     "evening_case": [
         {
             "name": "Hacker News (Show HN)",
             "url": "https://hnrss.org/show",
             "hashtag": "#разборкейса",
-        }
+        },
     ],
     "tool": [
         {
             "name": "Product Hunt Daily",
             "url": "https://www.producthunt.com/feed",
             "hashtag": "#полезняшка",
-        }
+        },
     ],
 }
 
@@ -128,7 +219,6 @@ def _parse_date(entry) -> Optional[datetime]:
 def _is_fresh(dt: Optional[datetime], max_age_days: int = MAX_AGE_DAYS) -> bool:
     """Вернуть True если пост не старше max_age_days дней."""
     if dt is None:
-        # Если дата неизвестна — пропускаем (считаем устаревшим)
         return False
     cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
     return dt >= cutoff
@@ -142,19 +232,15 @@ def _fetch_rss(source: dict, post_format: str, max_items: int = 10) -> list[Cont
         feed = feedparser.parse(resp.content)
 
         skipped_old = 0
-        for entry in feed.entries[:max_items * 3]:  # берём больше, т.к. будем фильтровать
-            # Парсим дату
+        for entry in feed.entries[:max_items * 3]:
             dt = _parse_date(entry)
 
-            # Фильтр по свежести
             if not _is_fresh(dt):
                 skipped_old += 1
                 continue
 
-            # Форматируем дату для отображения
             published_fmt = dt.strftime("%d.%m.%Y") if dt else ""
 
-            # Извлекаем текст
             summary = ""
             if hasattr(entry, "summary"):
                 summary = entry.summary[:800]
@@ -195,7 +281,7 @@ def fetch_for_slot(post_format: str, max_items: int = 10) -> list[ContentItem]:
     for source in sources:
         fetched = _fetch_rss(source, post_format, max_items=5)
         items.extend(fetched)
-        time.sleep(0.5)
+        time.sleep(0.3)
 
     # Если основные источники дали мало свежего — добираем из fallback
     if len(items) < 3:
