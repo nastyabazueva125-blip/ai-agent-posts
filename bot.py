@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import random
+import tempfile
 from datetime import time as dtime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -34,6 +35,7 @@ from telegram.ext import (
 import config
 from content_sources import fetch_for_slot, ContentItem
 from content_transformer import transform, translate_title
+from card_generator import generate_card
 
 logging.basicConfig(
     level=logging.INFO,
@@ -356,13 +358,54 @@ async def on_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         source_line += f'\n🔗 <a href="{item.url}">Оригинал</a>'
     header = f"<b>{label}</b> | 📂 {category}\n{source_line}\n\n"
 
-    await context.bot.send_message(
-        chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
-        text=header + text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=draft_keyboard(post_id),
-        disable_web_page_preview=True,
-    )
+    # Генерируем карточку-заголовок в стиле bazueva.design
+    card_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            card_path = tmp.name
+        loop2 = asyncio.get_event_loop()
+        card_path = await loop2.run_in_executor(
+            None,
+            lambda: generate_card(
+                title=item_data["ru_title"],
+                source=item.source,
+                hashtag=item.hashtag,
+                output_path=card_path,
+            )
+        )
+        logger.info(f"Card generated: {card_path}")
+    except Exception as e:
+        logger.warning(f"Card generation failed: {e}")
+        card_path = None
+
+    if card_path and os.path.exists(card_path):
+        try:
+            with open(card_path, "rb") as photo_file:
+                await context.bot.send_photo(
+                    chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+                    photo=photo_file,
+                    caption=header + text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=draft_keyboard(post_id),
+                )
+            os.unlink(card_path)
+        except Exception as e:
+            logger.warning(f"Photo send failed ({e}), sending as text")
+            await context.bot.send_message(
+                chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+                text=header + text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=draft_keyboard(post_id),
+                disable_web_page_preview=True,
+            )
+    else:
+        await context.bot.send_message(
+            chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+            text=header + text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=draft_keyboard(post_id),
+            disable_web_page_preview=True,
+        )
     logger.info(f"Draft sent for: {item.title[:50]}")
 
 
@@ -414,12 +457,38 @@ async def on_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     try:
-        await context.bot.send_message(
-            chat_id=config.TELEGRAM_CHANNEL_ID,
-            text=post["text"],
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
+        # При публикации в канал — тоже с карточкой
+        card_path_pub = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+                card_path_pub = tmp.name
+            ru_title_pub = post.get("ru_title", post.get("title", ""))
+            card_path_pub = generate_card(
+                title=ru_title_pub,
+                source=post.get("source", ""),
+                hashtag=post.get("hashtag", ""),
+                output_path=card_path_pub,
+            )
+        except Exception as e:
+            logger.warning(f"Card generation failed on publish: {e}")
+            card_path_pub = None
+
+        if card_path_pub and os.path.exists(card_path_pub):
+            with open(card_path_pub, "rb") as photo_file:
+                await context.bot.send_photo(
+                    chat_id=config.TELEGRAM_CHANNEL_ID,
+                    photo=photo_file,
+                    caption=post["text"],
+                    parse_mode=ParseMode.HTML,
+                )
+            os.unlink(card_path_pub)
+        else:
+            await context.bot.send_message(
+                chat_id=config.TELEGRAM_CHANNEL_ID,
+                text=post["text"],
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
         del pending[post_id]
         save_pending(pending)
 
@@ -509,13 +578,54 @@ async def on_rewrite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         source_line += f'\n🔗 <a href="{post["url"]}">Оригинал</a>'
     header = f"<b>{label}</b> | 📂 {category}\n{source_line}\n\n"
 
-    await context.bot.send_message(
-        chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
-        text=header + text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=draft_keyboard(post_id),
-        disable_web_page_preview=True,
-    )
+    # Генерируем карточку для переписанного поста
+    card_path_rw = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            card_path_rw = tmp.name
+        loop_rw = asyncio.get_event_loop()
+        ru_title_rw = pending[post_id].get("ru_title", post.get("title", ""))
+        card_path_rw = await loop_rw.run_in_executor(
+            None,
+            lambda: generate_card(
+                title=ru_title_rw,
+                source=post["source"],
+                hashtag=post.get("hashtag", ""),
+                output_path=card_path_rw,
+            )
+        )
+    except Exception as e:
+        logger.warning(f"Card generation failed on rewrite: {e}")
+        card_path_rw = None
+
+    if card_path_rw and os.path.exists(card_path_rw):
+        try:
+            with open(card_path_rw, "rb") as photo_file:
+                await context.bot.send_photo(
+                    chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+                    photo=photo_file,
+                    caption=header + text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=draft_keyboard(post_id),
+                )
+            os.unlink(card_path_rw)
+        except Exception as e:
+            logger.warning(f"Photo send failed on rewrite ({e}), sending as text")
+            await context.bot.send_message(
+                chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+                text=header + text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=draft_keyboard(post_id),
+                disable_web_page_preview=True,
+            )
+    else:
+        await context.bot.send_message(
+            chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+            text=header + text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=draft_keyboard(post_id),
+            disable_web_page_preview=True,
+        )
 
 
 async def on_edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
