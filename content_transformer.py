@@ -1,6 +1,6 @@
 """
 content_transformer.py — перевод полного текста статьи на нативный русский.
-Использует newspaper3k для извлечения полного текста по URL,
+Использует requests+BeautifulSoup для извлечения полного текста по URL,
 затем GPT-4.1-mini для точного перевода.
 """
 
@@ -52,6 +52,65 @@ def _fetch_full_text(url: str) -> str:
     except Exception as e:
         logger.warning(f"Full text fetch failed for {url[:60]}: {e}")
     return ""
+
+
+TRANSLATE_TITLE_PROMPT = """переведи заголовок и краткое описание статьи на русский язык.
+
+требования:
+- язык живой и нативный, не официальный
+- заголовок — одна строка, максимально близко к оригиналу
+- описание — 1-2 предложения, суть статьи
+- не добавляй ничего от себя
+
+формат ответа (строго):
+ЗАГОЛОВОК: <перевод заголовка>
+ОПИСАНИЕ: <1-2 предложения о чём статья>
+
+оригинал:
+ЗАГОЛОВОК: {title}
+ОПИСАНИЕ: {summary}
+"""
+
+
+def translate_title(title: str, summary: str) -> dict:
+    """Быстро перевести только заголовок и краткое описание для дайджеста.
+    
+    Возвращает dict с ключами 'title' и 'description'.
+    """
+    try:
+        prompt = TRANSLATE_TITLE_PROMPT.format(
+            title=title,
+            summary=summary[:500] if summary else "нет описания",
+        )
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "ты переводчик. переводи точно и кратко.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=200,
+            temperature=0.2,
+        )
+        text = response.choices[0].message.content.strip()
+
+        # Парсим ответ
+        ru_title = title  # fallback
+        ru_desc = summary[:100] if summary else ""
+
+        for line in text.splitlines():
+            if line.startswith("ЗАГОЛОВОК:"):
+                ru_title = line.removeprefix("ЗАГОЛОВОК:").strip()
+            elif line.startswith("ОПИСАНИЕ:"):
+                ru_desc = line.removeprefix("ОПИСАНИЕ:").strip()
+
+        return {"title": ru_title, "description": ru_desc}
+
+    except Exception as e:
+        logger.error(f"translate_title failed: {e}")
+        return {"title": title, "description": summary[:100] if summary else ""}
 
 
 TRANSLATE_PROMPT = """переведи этот материал на русский язык.
