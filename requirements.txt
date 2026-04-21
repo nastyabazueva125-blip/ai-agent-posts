@@ -5,3 +5,6 @@ python-dotenv>=1.0.0
 aiohttp>=3.9.0
 newspaper3k
 lxml_html_clean
+feedparser>=6.0.0
+beautifulsoup4>=4.12.0
+Pillow>=10.0.0
