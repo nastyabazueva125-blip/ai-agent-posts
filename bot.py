@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 AI Content Curator Bot для @bazuevaconsalt
 Режим дайджеста:
@@ -7,6 +6,10 @@ AI Content Curator Bot для @bazuevaconsalt
   3. Присылает одно сообщение-дайджест со списком тем + кнопки 1-10
   4. Пользователь нажимает номер → бот генерирует полный перевод статьи
   5. Готовый пост: Опубликовать / Переписать / Редактировать / Пропустить / 🖼 Карточка
+
+Голосовые заметки:
+  - Отправь голосовое сообщение → бот транскрибирует и предлагает переработать в пост
+  - /thoughts — посмотреть все сохранённые голосовые мысли
 
 Расписание (UTC, Бали UTC+8):
   01:00 UTC (09:00 Бали) — дайджест 10 тем на день
@@ -18,7 +21,7 @@ import logging
 import os
 import random
 import tempfile
-from datetime import time as dtime
+from datetime import datetime, time as dtime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
@@ -34,7 +37,7 @@ from telegram.ext import (
 
 import config
 from content_sources import fetch_for_slot, ContentItem
-from content_transformer import transform, translate_title
+from content_transformer import transform, translate_title, transform_voice_note
 from card_generator import generate_card
 from telegram_scraper import fetch_all_tg_channels
 
@@ -51,9 +54,10 @@ logger = logging.getLogger(__name__)
 # ConversationHandler states
 WAITING_EDIT = 1
 
-PENDING_FILE = "pending_posts.json"
-SEEN_FILE = "seen_ids.json"
-DIGEST_FILE = "digest_items.json"
+PENDING_FILE  = "pending_posts.json"
+SEEN_FILE     = "seen_ids.json"
+DIGEST_FILE   = "digest_items.json"
+THOUGHTS_FILE = "voice_thoughts.json"   # хранилище голосовых заметок
 
 SLOT_LABELS = {
     "morning_insight":    "☀️ Утро",
@@ -113,6 +117,14 @@ def save_digest(items: list) -> None:
     _save_json(DIGEST_FILE, items)
 
 
+def load_thoughts() -> list:
+    return _load_json(THOUGHTS_FILE, [])
+
+
+def save_thoughts(thoughts: list) -> None:
+    _save_json(THOUGHTS_FILE, thoughts)
+
+
 # ─── Keyboards ────────────────────────────────────────────────────────────
 
 def digest_keyboard(count: int) -> InlineKeyboardMarkup:
@@ -146,6 +158,24 @@ def draft_keyboard(post_id: str) -> InlineKeyboardMarkup:
     ])
 
 
+def thought_draft_keyboard(thought_id: str) -> InlineKeyboardMarkup:
+    """Клавиатура для черновика поста из голосовой заметки."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Опубликовать",  callback_data=f"approve_{thought_id}"),
+            InlineKeyboardButton("🔄 Переписать",    callback_data=f"rewrite_thought_{thought_id}"),
+        ],
+        [
+            InlineKeyboardButton("✏️ Редактировать", callback_data=f"edit_{thought_id}"),
+            InlineKeyboardButton("❌ Пропустить",    callback_data=f"skip_{thought_id}"),
+        ],
+        [
+            InlineKeyboardButton("🖼 Карточка",      callback_data=f"card_{thought_id}"),
+            InlineKeyboardButton("📝 Мои мысли",     callback_data="show_thoughts"),
+        ],
+    ])
+
+
 # ─── Digest builder ───────────────────────────────────────────────────────
 
 def _build_digest_blocking() -> list:
@@ -162,7 +192,6 @@ def _build_digest_blocking() -> list:
     try:
         all_tg = fetch_all_tg_channels(max_per_channel=5)
         fresh_tg = [i for i in all_tg if i.url not in seen]
-        # Берём не более 3, стараемся взять из разных каналов
         seen_sources = set()
         for item in fresh_tg:
             if item.source not in seen_sources:
@@ -170,7 +199,6 @@ def _build_digest_blocking() -> list:
                 seen_sources.add(item.source)
             if len(tg_items) >= 3:
                 break
-        # Если разных каналов мало — добираем из оставшихся
         if len(tg_items) < 3:
             for item in fresh_tg:
                 if item not in tg_items:
@@ -194,7 +222,6 @@ def _build_digest_blocking() -> list:
         except Exception as e:
             logger.error(f"Error fetching slot {slot}: {e}")
 
-    # Убираем дубли по URL среди RSS
     seen_urls = set(tg_urls)
     unique_rss = []
     for item in rss_items:
@@ -205,19 +232,13 @@ def _build_digest_blocking() -> list:
     random.shuffle(unique_rss)
     rss_selected = unique_rss[:7]
 
-    # ── 3. Собираем финальный список: TG первыми, затем RSS ───────────────
     selected = tg_items + rss_selected
     if not selected:
         logger.warning("No fresh items found for digest!")
         return []
     
-    # Перемешиваем чтобы TG-посты не были всегда в начале
     random.shuffle(selected)
     selected = selected[:10]
-
-    if not selected:
-        logger.warning("No fresh items found for digest!")
-        return []
 
     digest_items = []
     for idx, item in enumerate(selected):
@@ -442,6 +463,263 @@ async def on_show_digest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         text=text,
         parse_mode=ParseMode.HTML,
         reply_markup=keyboard,
+        disable_web_page_preview=True,
+    )
+
+
+# ─── Voice notes ──────────────────────────────────────────────────────────
+
+async def on_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Получить голосовое сообщение → транскрибировать → предложить сделать пост."""
+    msg = update.message
+    voice = msg.voice or msg.audio
+
+    if not voice:
+        return
+
+    await msg.reply_text("🎤 <i>Получила голосовую заметку. Транскрибирую...</i>", parse_mode=ParseMode.HTML)
+
+    try:
+        # Скачиваем файл
+        file = await context.bot.get_file(voice.file_id)
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+            voice_path = tmp.name
+        await file.download_to_drive(voice_path)
+
+        # Транскрибируем через OpenAI Whisper
+        from openai import OpenAI
+        oai = OpenAI()
+        with open(voice_path, "rb") as audio_file:
+            transcript_result = oai.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+                language="ru",
+            )
+        transcript = transcript_result.text.strip()
+        os.unlink(voice_path)
+
+        if not transcript:
+            await msg.reply_text("⚠️ Не удалось распознать речь. Попробуй ещё раз.")
+            return
+
+        logger.info(f"Voice transcribed: {transcript[:80]}...")
+
+        # Сохраняем заметку
+        thoughts = load_thoughts()
+        thought_id = f"thought_{len(thoughts)}_{abs(hash(transcript[:30]))}"
+        thought = {
+            "id": thought_id,
+            "transcript": transcript,
+            "created_at": datetime.now().strftime("%d.%m.%Y %H:%M"),
+            "post_text": None,
+        }
+        thoughts.append(thought)
+        save_thoughts(thoughts)
+
+        # Показываем транскрипцию и предлагаем переработать
+        await msg.reply_text(
+            f"📝 <b>Транскрипция:</b>\n<i>{transcript}</i>\n\n"
+            f"Переработать в пост?",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("✍️ Написать пост", callback_data=f"voice_to_post_{thought_id}"),
+                    InlineKeyboardButton("💾 Сохранить мысль", callback_data=f"save_thought_{thought_id}"),
+                ],
+                [
+                    InlineKeyboardButton("📝 Мои мысли", callback_data="show_thoughts"),
+                ],
+            ]),
+        )
+
+    except Exception as e:
+        logger.error(f"Voice processing failed: {e}")
+        await msg.reply_text(f"❌ Ошибка обработки голосового: {e}")
+
+
+async def on_voice_to_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Переработать голосовую заметку в пост."""
+    query = update.callback_query
+    await query.answer("Генерирую пост из заметки...")
+
+    thought_id = query.data.removeprefix("voice_to_post_")
+    thoughts = load_thoughts()
+    thought = next((t for t in thoughts if t["id"] == thought_id), None)
+
+    if not thought:
+        await query.edit_message_text("⚠️ Заметка не найдена.")
+        return
+
+    await query.edit_message_text(
+        f"⏳ <i>Перерабатываю мысль в пост...</i>\n\n"
+        f"<i>{thought['transcript'][:150]}{'…' if len(thought['transcript']) > 150 else ''}</i>",
+        parse_mode=ParseMode.HTML,
+    )
+
+    loop = asyncio.get_event_loop()
+    try:
+        post_text = await loop.run_in_executor(
+            None,
+            lambda: transform_voice_note(thought["transcript"], "#мысливслух"),
+        )
+    except Exception as e:
+        logger.error(f"Voice to post failed: {e}")
+        post_text = ""
+
+    if not post_text:
+        await context.bot.send_message(
+            chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+            text="❌ Не удалось сгенерировать пост из заметки.",
+        )
+        return
+
+    # Сохраняем пост в pending
+    pending = load_pending()
+    pending[thought_id] = {
+        "stage": "draft",
+        "text": post_text,
+        "title": thought["transcript"][:60],
+        "ru_title": thought["transcript"][:60],
+        "post_format": "voice_note",
+        "source": "Голосовая заметка",
+        "url": "",
+        "summary": thought["transcript"],
+        "hashtag": "#мысливслух",
+        "published": thought["created_at"],
+        "is_voice": True,
+    }
+    save_pending(pending)
+
+    # Обновляем заметку — добавляем текст поста
+    for t in thoughts:
+        if t["id"] == thought_id:
+            t["post_text"] = post_text
+            break
+    save_thoughts(thoughts)
+
+    await context.bot.send_message(
+        chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+        text=f"🎤 <b>Голосовая мысль</b> · {thought['created_at']}\n\n{post_text}",
+        parse_mode=ParseMode.HTML,
+        reply_markup=thought_draft_keyboard(thought_id),
+        disable_web_page_preview=True,
+    )
+    logger.info(f"Voice note post generated: {thought_id}")
+
+
+async def on_save_thought(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Сохранить голосовую заметку без генерации поста."""
+    query = update.callback_query
+    await query.answer("Мысль сохранена!")
+
+    thought_id = query.data.removeprefix("save_thought_")
+    thoughts = load_thoughts()
+    thought = next((t for t in thoughts if t["id"] == thought_id), None)
+
+    if thought:
+        await query.edit_message_text(
+            query.message.text + "\n\n💾 <i>Мысль сохранена в «Мои мысли»</i>",
+            parse_mode=ParseMode.HTML,
+        )
+    else:
+        await query.answer("⚠️ Заметка не найдена")
+
+
+async def on_show_thoughts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показать список всех сохранённых голосовых заметок."""
+    query = update.callback_query
+    await query.answer()
+    await _send_thoughts_list(context.bot, config.TELEGRAM_ADMIN_CHAT_ID)
+
+
+async def cmd_thoughts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/thoughts — показать список голосовых заметок."""
+    await _send_thoughts_list(context.bot, update.effective_chat.id)
+
+
+async def _send_thoughts_list(bot, chat_id: int) -> None:
+    """Отправить список всех голосовых заметок."""
+    thoughts = load_thoughts()
+
+    if not thoughts:
+        await bot.send_message(
+            chat_id=chat_id,
+            text="📝 <b>Мои мысли</b>\n\nПока нет сохранённых заметок.\n\nОтправь голосовое сообщение — я транскрибирую и предложу сделать пост.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    lines = ["📝 <b>Мои мысли</b>", f"<i>Всего заметок: {len(thoughts)}</i>", ""]
+    buttons = []
+
+    for i, t in enumerate(reversed(thoughts[-20:]), 1):  # последние 20
+        status = "✅" if t.get("post_text") else "💾"
+        short = t["transcript"][:80] + ("…" if len(t["transcript"]) > 80 else "")
+        lines.append(f"{status} <b>{i}.</b> <i>{t['created_at']}</i>")
+        lines.append(f"    {short}")
+        lines.append("")
+
+        # Кнопка для каждой заметки
+        btn_text = f"{i}. {t['transcript'][:25]}…" if len(t["transcript"]) > 25 else f"{i}. {t['transcript']}"
+        buttons.append(InlineKeyboardButton(btn_text, callback_data=f"voice_to_post_{t['id']}"))
+
+    # Кнопки по 2 в ряд
+    keyboard_rows = []
+    for i in range(0, len(buttons), 2):
+        keyboard_rows.append(buttons[i:i + 2])
+
+    await bot.send_message(
+        chat_id=chat_id,
+        text="\n".join(lines),
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(keyboard_rows) if keyboard_rows else None,
+    )
+
+
+async def on_rewrite_thought(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Переписать пост из голосовой заметки."""
+    query = update.callback_query
+    await query.answer("Переписываю...")
+
+    thought_id = query.data.removeprefix("rewrite_thought_")
+    thoughts = load_thoughts()
+    thought = next((t for t in thoughts if t["id"] == thought_id), None)
+
+    if not thought:
+        await query.edit_message_text("⚠️ Заметка не найдена.")
+        return
+
+    await query.edit_message_text(
+        query.message.text + "\n\n🔄 <i>Переписываю...</i>",
+        parse_mode=ParseMode.HTML,
+    )
+
+    loop = asyncio.get_event_loop()
+    try:
+        post_text = await loop.run_in_executor(
+            None,
+            lambda: transform_voice_note(thought["transcript"], "#мысливслух"),
+        )
+    except Exception as e:
+        post_text = ""
+
+    if not post_text:
+        await context.bot.send_message(
+            chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+            text="❌ Не удалось переписать пост.",
+        )
+        return
+
+    pending = load_pending()
+    if thought_id in pending:
+        pending[thought_id]["text"] = post_text
+        save_pending(pending)
+
+    await context.bot.send_message(
+        chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+        text=f"🎤 <b>Голосовая мысль</b> · {thought['created_at']}\n\n{post_text}",
+        parse_mode=ParseMode.HTML,
+        reply_markup=thought_draft_keyboard(thought_id),
         disable_web_page_preview=True,
     )
 
@@ -717,20 +995,30 @@ async def on_edit_receive(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     context.user_data.pop("editing_post_id", None)
 
     post = pending[post_id]
-    label = SLOT_LABELS.get(post["post_format"], "📋 Черновик")
-    category = CATEGORIES.get(post.get("hashtag", ""), "Практика для бизнеса")
-    date_str = f" · {post['published']}" if post.get("published") else ""
-    source_line = f"📰 <b>{post['source']}</b>{date_str}"
-    if post.get("url"):
-        source_line += f'\n🔗 <a href="{post["url"]}">Оригинал</a>'
-    header = f"<b>{label}</b> | 📂 {category}\n{source_line}\n\n"
+    is_voice = post.get("is_voice", False)
 
-    await update.message.reply_text(
-        header + new_text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=draft_keyboard(post_id),
-        disable_web_page_preview=True,
-    )
+    if is_voice:
+        await update.message.reply_text(
+            f"🎤 <b>Голосовая мысль</b>\n\n{new_text}",
+            parse_mode=ParseMode.HTML,
+            reply_markup=thought_draft_keyboard(post_id),
+            disable_web_page_preview=True,
+        )
+    else:
+        label = SLOT_LABELS.get(post["post_format"], "📋 Черновик")
+        category = CATEGORIES.get(post.get("hashtag", ""), "Практика для бизнеса")
+        date_str = f" · {post['published']}" if post.get("published") else ""
+        source_line = f"📰 <b>{post['source']}</b>{date_str}"
+        if post.get("url"):
+            source_line += f'\n🔗 <a href="{post["url"]}">Оригинал</a>'
+        header = f"<b>{label}</b> | 📂 {category}\n{source_line}\n\n"
+
+        await update.message.reply_text(
+            header + new_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=draft_keyboard(post_id),
+            disable_web_page_preview=True,
+        )
     return ConversationHandler.END
 
 
@@ -754,9 +1042,12 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "👋 Привет! Я бот-куратор контента для @bazuevaconsalt.\n\n"
         "Каждое утро в 09:00 (Бали) я пришлю дайджест из 10 свежих тем.\n"
         "Ты выбираешь тему — я пишу пост.\n\n"
+        "🎤 <b>Голосовые заметки:</b> просто отправь голосовое — я транскрибирую и предложу сделать пост.\n\n"
         "Команды:\n"
         "/digest — получить дайджест прямо сейчас\n"
-        "/start — это сообщение"
+        "/thoughts — посмотреть все сохранённые мысли\n"
+        "/start — это сообщение",
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -775,6 +1066,11 @@ def main() -> None:
     )
 
     app.add_handler(conv)
+
+    # Голосовые сообщения
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, on_voice_message))
+
+    # Callback handlers
     app.add_handler(CallbackQueryHandler(on_pick,              pattern=r"^pick_\d+$"))
     app.add_handler(CallbackQueryHandler(on_refresh_digest,    pattern=r"^refresh_digest$"))
     app.add_handler(CallbackQueryHandler(on_show_digest,       pattern=r"^show_digest$"))
@@ -782,9 +1078,16 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(on_approve_with_card, pattern=r"^approve_with_card_"))
     app.add_handler(CallbackQueryHandler(on_approve,           pattern=r"^approve_"))
     app.add_handler(CallbackQueryHandler(on_skip,              pattern=r"^skip_"))
+    app.add_handler(CallbackQueryHandler(on_rewrite_thought,   pattern=r"^rewrite_thought_"))
     app.add_handler(CallbackQueryHandler(on_rewrite,           pattern=r"^rewrite_"))
-    app.add_handler(CommandHandler("start",  cmd_start))
-    app.add_handler(CommandHandler("digest", cmd_digest))
+    app.add_handler(CallbackQueryHandler(on_voice_to_post,     pattern=r"^voice_to_post_"))
+    app.add_handler(CallbackQueryHandler(on_save_thought,      pattern=r"^save_thought_"))
+    app.add_handler(CallbackQueryHandler(on_show_thoughts,     pattern=r"^show_thoughts$"))
+
+    # Commands
+    app.add_handler(CommandHandler("start",    cmd_start))
+    app.add_handler(CommandHandler("digest",   cmd_digest))
+    app.add_handler(CommandHandler("thoughts", cmd_thoughts))
 
     # Расписание: дайджест каждый день в 01:00 UTC (09:00 Бали)
     jq = app.job_queue
@@ -798,9 +1101,10 @@ def main() -> None:
     jq.run_once(startup_test, when=5)
 
     logger.info("=" * 55)
-    logger.info("Bot started! Digest mode.")
+    logger.info("Bot started! Digest mode + Voice notes.")
     logger.info("  Daily digest at 01:00 UTC (09:00 Bali)")
     logger.info("  10 topics → user picks one → bot writes post")
+    logger.info("  Voice notes → transcribe → write post")
     logger.info(f"  Channel: {config.TELEGRAM_CHANNEL_ID}")
     logger.info(f"  Admin:   {config.TELEGRAM_ADMIN_CHAT_ID}")
     logger.info("=" * 55)
