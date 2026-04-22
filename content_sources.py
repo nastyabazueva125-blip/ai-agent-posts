@@ -1,28 +1,32 @@
 """
-content_sources.py — модуль сбора контента из RSS-лент и блогов.
+Источники контента для бота @bazuevaconsalt.
 
-Источники по тематикам:
-  morning_insight  — мышление, стратегия, рост бизнеса (Seth Godin, Lenny, Andrew Chen...)
-  afternoon_practice — маркетинг, трафик, воронки, SEO (Neil Patel, Ahrefs, Buffer, HubSpot...)
-  evening_case     — кейсы компаний, разборы бизнесов (SaaStr, Inc, Fast Company, Sales Hacker...)
-  tool             — инструменты и автоматизация (Zapier, Product Hunt, Intercom...)
+4 рубрики:
+  - tools       : Product Hunt (RSS) — новые инструменты для бизнеса
+  - competitors : TG-каналы конкурентов/коллег (@grebenukm, @big_bad_coach, @llm_under_hood)
+  - useful      : TG-каналы полезного контента (@promtolog, @ai_for_business, @prompt_design)
 
-Фильтрация: берём только посты за последние 7 дней.
+Рубрика "observations" (Мои наблюдения) — только голосовые заметки / ручной ввод, здесь не нужна.
+Рубрика "content_plan" — генерируется агентом в content_plan.py, здесь не нужна.
 """
 
-import requests
-import feedparser
 import logging
-from dataclasses import dataclass
-from typing import Optional
-from datetime import datetime, timezone, timedelta
-from email.utils import parsedate_to_datetime
 import time
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
+from typing import Optional
+
+import feedparser
+import requests
 
 logger = logging.getLogger(__name__)
 
-# Максимальный возраст поста в днях
-MAX_AGE_DAYS = 7
+MAX_AGE_DAYS = 7   # RSS (Product Hunt) — только свежее за неделю
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; ContentBot/1.0; +https://bazuevaconsalt.ru)"
+}
 
 
 @dataclass
@@ -31,222 +35,80 @@ class ContentItem:
     url: str
     summary: str
     source: str
-    post_format: str  # morning_insight | afternoon_practice | evening_case | tool
+    post_format: str          # tools | competitors | useful | content_plan | voice_note
     hashtag: str
-    published: Optional[str] = None
-    published_dt: Optional[datetime] = None  # для сортировки по свежести
+    published: str = ""
+    published_dt: Optional[datetime] = field(default=None, repr=False)
 
 
-# ─── RSS-ленты по форматам ─────────────────────────────────────────────────
+# ─── Product Hunt RSS (рубрика Tools) ─────────────────────────────────────
 
-RSS_SOURCES = {
-    # ── Утро: мышление, стратегия, рост ──────────────────────────────────
-    "morning_insight": [
-        {
-            "name": "Seth Godin",
-            "url": "https://seths.blog/feed/",
-            "hashtag": "#мысливслух",
-        },
-        {
-            "name": "Lenny's Newsletter",
-            "url": "https://www.lennysnewsletter.com/feed",
-            "hashtag": "#мысливслух",
-        },
-        {
-            "name": "Andrew Chen",
-            "url": "https://andrewchen.com/feed/",
-            "hashtag": "#мысливслух",
-        },
-        {
-            "name": "First 1000 (Ali Abouelatta)",
-            "url": "https://read.first1000.co/feed",
-            "hashtag": "#мысливслух",
-        },
-        {
-            "name": "Intercom Blog",
-            "url": "https://www.intercom.com/blog/feed",
-            "hashtag": "#мысливслух",
-        },
-    ],
+TOOLS_RSS = [
+    {
+        "name": "Product Hunt",
+        "url": "https://www.producthunt.com/feed",
+        "hashtag": "#tools",
+    },
+]
 
-    # ── Практика: маркетинг, трафик, воронки, SEO ─────────────────────────
-    "afternoon_practice": [
-        {
-            "name": "Neil Patel Blog",
-            "url": "https://neilpatel.com/blog/feed/",
-            "hashtag": "#воронкиипродажи",
-        },
-        {
-            "name": "Ahrefs Blog",
-            "url": "https://ahrefs.com/blog/feed/",
-            "hashtag": "#воронкиипродажи",
-        },
-        {
-            "name": "Buffer Blog",
-            "url": "https://buffer.com/resources/feed/",
-            "hashtag": "#воронкиипродажи",
-        },
-        {
-            "name": "HubSpot Sales Blog",
-            "url": "https://blog.hubspot.com/sales/rss.xml",
-            "hashtag": "#воронкиипродажи",
-        },
-        {
-            "name": "Almost Timely (AI for biz)",
-            "url": "https://almosttimely.substack.com/feed",
-            "hashtag": "#aiдлябизнеса",
-        },
-    ],
 
-    # ── Вечер: кейсы компаний, разборы, истории роста ─────────────────────
-    "evening_case": [
-        {
-            "name": "SaaStr",
-            "url": "https://www.saastr.com/feed/",
-            "hashtag": "#разборкейса",
-        },
-        {
-            "name": "Sales Hacker",
-            "url": "https://www.saleshacker.com/feed/",
-            "hashtag": "#разборкейса",
-        },
-        {
-            "name": "Inc Magazine",
-            "url": "https://www.inc.com/rss/",
-            "hashtag": "#разборкейса",
-        },
-        {
-            "name": "Fast Company",
-            "url": "https://www.fastcompany.com/latest/rss",
-            "hashtag": "#разборкейса",
-        },
-        {
-            "name": "First Round Review",
-            "url": "https://review.firstround.com/feed.xml",
-            "hashtag": "#разборкейса",
-        },
-        {
-            "name": "YC Blog",
-            "url": "https://www.ycombinator.com/blog/rss.xml",
-            "hashtag": "#разборкейса",
-        },
-    ],
+# ─── TG-каналы конкурентов/коллег (рубрика Конкуренты) ────────────────────
 
-    # ── Инструменты: автоматизация, AI-сервисы для бизнеса ────────────────
-    "tool": [
-        {
-            "name": "Zapier Blog",
-            "url": "https://zapier.com/blog/feeds/latest/",
-            "hashtag": "#tools",
-        },
-        {
-            "name": "Product Hunt AI",
-            "url": "https://www.producthunt.com/feed?category=artificial-intelligence",
-            "hashtag": "#aiдлябизнеса",
-        },
-        {
-            "name": "Backlinko",
-            "url": "https://backlinko.com/feed",
-            "hashtag": "#tools",
-        },
-        {
-            "name": "a16z AI",
-            "url": "https://a16z.com/feed/",
-            "hashtag": "#aiдлябизнеса",
-        },
-    ],
-}
+TG_COMPETITORS = [
+    {"handle": "grebenukm",    "name": "Михаил Гребенюк",  "hashtag": "#воронкиипродажи"},
+    {"handle": "big_bad_coach","name": "Big Bad Coach",     "hashtag": "#мысливслух"},
+    {"handle": "llm_under_hood","name": "LLM под капотом",  "hashtag": "#aiдлябизнеса"},
+]
 
-# Fallback RSS (всегда работают, тоже фильтруются по дате)
-FALLBACK_RSS = {
-    "morning_insight": [
-        {
-            "name": "Hacker News (Ask HN)",
-            "url": "https://hnrss.org/ask",
-            "hashtag": "#мысливслух",
-        },
-    ],
-    "afternoon_practice": [
-        {
-            "name": "Zapier Blog",
-            "url": "https://zapier.com/blog/feeds/latest/",
-            "hashtag": "#операционка",
-        },
-    ],
-    "evening_case": [
-        {
-            "name": "Hacker News (Show HN)",
-            "url": "https://hnrss.org/show",
-            "hashtag": "#разборкейса",
-        },
-    ],
-    "tool": [
-        {
-            "name": "Product Hunt Daily",
-            "url": "https://www.producthunt.com/feed",
-            "hashtag": "#tools",
-        },
-    ],
-}
+# ─── TG-каналы полезного контента (рубрика Полезное/Tools AI) ─────────────
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; ContentBot/1.0; +https://bazuevaconsalt.ru)"
-}
+TG_USEFUL = [
+    {"handle": "promtolog",      "name": "Промтолог",         "hashtag": "#tools"},
+    {"handle": "ai_for_business","name": "AI для бизнеса",    "hashtag": "#aiдлябизнеса"},
+    {"handle": "prompt_design",  "name": "Силиконовый Мешок", "hashtag": "#aiдлябизнеса"},
+]
 
+
+# ─── RSS helpers ──────────────────────────────────────────────────────────
 
 def _parse_date(entry) -> Optional[datetime]:
-    """Попытаться извлечь дату публикации из RSS-записи."""
     raw_date = entry.get("published", "") or entry.get("updated", "")
-
-    # Метод 1: стандартный RFC 2822 (большинство RSS)
     if raw_date:
         try:
             return parsedate_to_datetime(raw_date).astimezone(timezone.utc)
         except Exception:
             pass
-
-    # Метод 2: через published_parsed (feedparser struct_time)
     parsed = entry.get("published_parsed") or entry.get("updated_parsed")
     if parsed:
         try:
             return datetime(*parsed[:6], tzinfo=timezone.utc)
         except Exception:
             pass
-
     return None
 
 
 def _is_fresh(dt: Optional[datetime], max_age_days: int = MAX_AGE_DAYS) -> bool:
-    """Вернуть True если пост не старше max_age_days дней."""
     if dt is None:
         return False
     cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
     return dt >= cutoff
 
 
-def _fetch_rss(source: dict, post_format: str, max_items: int = 10) -> list[ContentItem]:
-    """Получить свежие записи из RSS-ленты (только за последние 7 дней)."""
+def _fetch_rss(source: dict, post_format: str, max_items: int = 10) -> list:
     items = []
     try:
         resp = requests.get(source["url"], headers=HEADERS, timeout=10)
         feed = feedparser.parse(resp.content)
-
-        skipped_old = 0
         for entry in feed.entries[:max_items * 3]:
             dt = _parse_date(entry)
-
             if not _is_fresh(dt):
-                skipped_old += 1
                 continue
-
             published_fmt = dt.strftime("%d.%m.%Y") if dt else ""
-
             summary = ""
             if hasattr(entry, "summary"):
                 summary = entry.summary[:800]
             elif hasattr(entry, "content"):
                 summary = entry.content[0].value[:800]
-
             items.append(ContentItem(
                 title=entry.get("title", ""),
                 url=entry.get("link", ""),
@@ -257,54 +119,33 @@ def _fetch_rss(source: dict, post_format: str, max_items: int = 10) -> list[Cont
                 published=published_fmt,
                 published_dt=dt,
             ))
-
             if len(items) >= max_items:
                 break
-
-        if skipped_old:
-            logger.debug(f"{source['name']}: skipped {skipped_old} posts older than {MAX_AGE_DAYS} days")
-
     except Exception as e:
         logger.warning(f"RSS fetch failed for {source['name']}: {e}")
     return items
 
 
-def fetch_for_slot(post_format: str, max_items: int = 10) -> list[ContentItem]:
-    """
-    Собрать свежий контент (за последние 7 дней) для конкретного временного слота.
-    post_format: morning_insight | afternoon_practice | evening_case | tool
-    """
+def fetch_tools_rss(max_items: int = 5) -> list:
+    """Получить свежие продукты с Product Hunt."""
     items = []
-    sources = RSS_SOURCES.get(post_format, [])
-    fallbacks = FALLBACK_RSS.get(post_format, [])
-
-    for source in sources:
-        fetched = _fetch_rss(source, post_format, max_items=5)
+    for source in TOOLS_RSS:
+        fetched = _fetch_rss(source, "tools", max_items=max_items)
         items.extend(fetched)
         time.sleep(0.3)
-
-    # Если основные источники дали мало свежего — добираем из fallback
-    if len(items) < 3:
-        logger.info(f"Using fallback sources for {post_format} (only {len(items)} fresh items found)")
-        for source in fallbacks:
-            fetched = _fetch_rss(source, post_format, max_items=8)
-            items.extend(fetched)
-
-    # Убираем пустые записи
     items = [i for i in items if i.title and i.url]
-
-    # Сортируем по дате — сначала самые свежие
-    items.sort(key=lambda x: x.published_dt or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
-
-    fresh_count = len(items)
-    logger.info(f"Fetched {fresh_count} fresh items (≤{MAX_AGE_DAYS}d) for slot '{post_format}'")
-
+    items.sort(
+        key=lambda x: x.published_dt or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    logger.info(f"Product Hunt: {len(items)} fresh items")
     return items[:max_items]
 
 
-def fetch_all_slots() -> dict[str, list[ContentItem]]:
-    """Собрать контент для всех слотов сразу."""
-    result = {}
-    for slot in ["morning_insight", "afternoon_practice", "evening_case", "tool"]:
-        result[slot] = fetch_for_slot(slot)
-    return result
+# ─── Backward compat: fetch_for_slot (используется в on_rewrite) ──────────
+
+def fetch_for_slot(post_format: str, max_items: int = 10) -> list:
+    """Совместимость со старым кодом — теперь только tools через Product Hunt."""
+    if post_format == "tools" or post_format == "tool":
+        return fetch_tools_rss(max_items=max_items)
+    return []

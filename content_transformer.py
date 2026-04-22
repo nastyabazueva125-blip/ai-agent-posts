@@ -1,245 +1,159 @@
 """
-content_transformer.py — перевод/адаптация статьи на русский язык для Telegram-канала.
-Загружает полный текст через requests+BeautifulSoup.
-Если текст недоступен (paywall, слишком короткий) — использует RSS summary.
+Генерация постов для @bazuevaconsalt.
+
+4 рубрики с разными промптами:
+  - tools       : обзор нового инструмента (Product Hunt)
+  - competitors : адаптация поста конкурента/коллеги под свою аудиторию
+  - useful      : полезный пост из TG-канала (AI, инструменты)
+  - content_plan: учебный пост по теме из контент-плана (разбор кейса, ошибки, инсайт)
+  - voice_note  : переработка голосовой заметки в пост
 """
 
+import json
 import logging
+
 import requests
 from bs4 import BeautifulSoup
 from openai import OpenAI
-from content_sources import ContentItem
 
 logger = logging.getLogger(__name__)
 
-client = OpenAI()  # API key и base_url из окружения
+client = OpenAI()
 
-MAX_TEXT_CHARS = 6000  # ~4000 токенов — достаточно для полного поста
-
-# Минимальная длина текста чтобы считать его полноценным (не paywall-заглушкой)
-MIN_USEFUL_TEXT_CHARS = 800
-
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-}
-
-# Признаки paywall / закрытого контента
-PAYWALL_SIGNALS = [
-    "subscribers only",
-    "for subscribers",
-    "paid subscribers",
-    "subscribe to read",
-    "subscribe to continue",
-    "this post is for paying subscribers",
-    "this post is for paid subscribers",
-    "только для подписчиков",
-    "платным подписчикам",
-    "sign in to read",
-    "login to read",
-    "create a free account",
-    "unlock this post",
-    "members only",
-    "premium content",
+MAX_TEXT_CHARS = 6000
+PAYWALL_MARKERS = [
+    "subscribe to read", "subscribers only", "this is a subscriber",
+    "только для подписчиков", "это письмо только для", "платных подписчиков",
+    "sign in to read", "create a free account", "get full access",
+    "unlock this article", "premium content", "member-only",
 ]
 
-# ─── Тон голоса автора канала ──────────────────────────────────────────────
-# Примеры реальных постов автора — используются для калибровки стиля
-AUTHOR_VOICE_EXAMPLES = """
-ПРИМЕР 1:
-Основная ошибка в продажах — забыть про нашего клиента. Мы выделяем огромные бюджеты на поиск, но не на доведение до продажи. Часто на консультациях я сталкиваюсь именно с этим.
-
-ПРИМЕР 2:
-Вчера на консультации столкнулась с такой проблемой как неправильное распределение ролей. Часто ассистент выполняет роль друга, а ПМ роль ассистента.
-
-ПРИМЕР 3:
-Ошибка ограниченного майндсета. Я часто слышу "у меня точно не получится". Ну супер, значит вы проиграли. Выигрывает тот, кто думает, что всё возможно.
-
-ПРИМЕР 4:
-Как продать через оффер.
+AUTHOR_STYLE = """
+стиль автора — Настя Базуева, консультант по бизнесу для предпринимателей малого бизнеса:
+- пишет от первого лица: "я часто вижу", "на консультации столкнулась", "мой клиент"
+- короткие рубленые фразы. без воды и официоза
+- прямолинейно: называет ошибки ошибками, не смягчает
+- конкретные примеры из практики, не абстрактные советы
+- живой разговорный язык, иногда с юмором
+- посты 150-250 слов. не длиннее
+- хештег в самом конце, отдельной строкой
 """
 
-AUTHOR_STYLE_DESCRIPTION = """
-Стиль автора (Настя Базуева, консультант по бизнесу):
-- Короткие рубленые фразы, без воды
-- Говорит от первого лица: "я часто вижу", "на консультации столкнулась", "я слышу"
-- Конкретные наблюдения из практики — не абстрактные советы
-- Прямолинейность: называет ошибки прямо, без смягчений
-- Разговорный язык: "ну супер", "вот именно", "это важно"
-- Структура: тезис → наблюдение из практики → вывод
-- Длина: 100-250 слов, не больше
-- Хештег в конце
-- Без "подписывайтесь", без призывов к действию
-- Без официоза и корпоративного языка
+AUTHOR_EXAMPLES = """
+пример 1:
+Основная ошибка в продажах — забыть про существующего клиента.
+Мы выделяем огромные бюджеты на поиск новых, но не на доведение до продажи тех, кто уже есть.
+Часто на консультациях я сталкиваюсь именно с этим.
+CRM пустая. Follow-up не настроен. Клиент написал — и тишина.
+А потом удивляемся, почему конверсия низкая.
+Работайте с теми, кто уже поднял руку. Это дешевле и быстрее.
+#воронкиипродажи
+
+пример 2:
+Вчера на консультации — неправильное распределение ролей.
+Ассистент выполняет роль друга. PM — роль ассистента.
+В итоге никто не делает свою работу.
+Когда нет чёткого разграничения — всё смешивается. И бизнес буксует.
+Пропишите роли. Буквально на бумаге. Кто за что отвечает и что НЕ делает.
+#операционка
+
+пример 3:
+Ошибка ограниченного майндсета.
+Я часто слышу: "у меня точно не получится".
+Ну супер, значит вы уже проиграли.
+Выигрывает тот, кто думает что всё возможно — и идёт пробовать.
+Мышление определяет результат. Это не мотивашка, это факт.
+#мысливслух
 """
 
-
-def _has_paywall(text: str) -> bool:
-    """Проверить, является ли текст paywall-заглушкой."""
-    text_lower = text.lower()
-    for signal in PAYWALL_SIGNALS:
-        if signal in text_lower:
-            return True
-    return False
-
-
-def _fetch_full_text(url: str) -> str:
-    """Загрузить полный текст статьи по URL через requests + BeautifulSoup."""
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=12)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.content, 'html.parser')
-
-        for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'aside', 'form', 'button']):
-            tag.decompose()
-
-        content = (
-            soup.find('article') or
-            soup.find('div', class_=lambda c: c and any(x in c.lower() for x in [
-                'post-content', 'article-body', 'entry-content', 'post-body',
-                'content-body', 'prose', 'article-content', 'post__content'
-            ])) or
-            soup.find('main') or
-            soup.find('body')
-        )
-
-        if content:
-            text = content.get_text(separator='\n', strip=True)
-            lines = [l.strip() for l in text.splitlines() if len(l.strip()) > 30]
-            text = '\n'.join(lines)
-
-            if _has_paywall(text):
-                logger.info(f"Paywall detected for {url[:60]} — falling back to RSS summary")
-                return ""
-
-            if len(text) < MIN_USEFUL_TEXT_CHARS:
-                logger.info(f"Text too short ({len(text)} chars) for {url[:60]} — likely paywall/preview")
-                return ""
-
-            logger.info(f"Full text fetched: {len(text)} chars from {url[:60]}")
-            return text
-
-    except Exception as e:
-        logger.warning(f"Full text fetch failed for {url[:60]}: {e}")
-    return ""
-
-
-TRANSLATE_TITLE_PROMPT = """переведи заголовок и краткое описание статьи на русский язык.
-
-требования:
-- язык живой и нативный, не официальный
-- заголовок — одна строка, максимально близко к оригиналу
-- описание — 1-2 предложения, суть статьи
-- не добавляй ничего от себя
-
-формат ответа (строго):
-ЗАГОЛОВОК: <перевод заголовка>
-ОПИСАНИЕ: <1-2 предложения о чём статья>
-
-оригинал:
-ЗАГОЛОВОК: {title}
-ОПИСАНИЕ: {summary}
-"""
-
-
-def translate_title(title: str, summary: str) -> dict:
-    """Быстро перевести только заголовок и краткое описание для дайджеста."""
-    try:
-        prompt = TRANSLATE_TITLE_PROMPT.format(
-            title=title,
-            summary=summary[:500] if summary else "нет описания",
-        )
-        response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=[
-                {"role": "system", "content": "ты переводчик. переводи точно и кратко."},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=200,
-            temperature=0.2,
-        )
-        text = response.choices[0].message.content.strip()
-
-        ru_title = title
-        ru_desc = summary[:100] if summary else ""
-
-        for line in text.splitlines():
-            if line.startswith("ЗАГОЛОВОК:"):
-                ru_title = line.removeprefix("ЗАГОЛОВОК:").strip()
-            elif line.startswith("ОПИСАНИЕ:"):
-                ru_desc = line.removeprefix("ОПИСАНИЕ:").strip()
-
-        return {"title": ru_title, "description": ru_desc}
-
-    except Exception as e:
-        logger.error(f"translate_title failed: {e}")
-        return {"title": title, "description": summary[:100] if summary else ""}
-
-
-# ─── Промпты для генерации поста ──────────────────────────────────────────
-
-POST_FROM_FULL_TEXT_PROMPT = """у тебя есть полный текст статьи. 
-напиши на его основе пост для телеграм-канала в стиле автора.
+TOOLS_PROMPT = """напиши пост-обзор нового инструмента для телеграм-канала предпринимателей.
 
 {style}
 
-примеры постов автора для ориентира по стилю:
-{examples}
+данные о продукте:
+НАЗВАНИЕ: {title}
+ОПИСАНИЕ: {summary}
+ССЫЛКА: {url}
 
-материал для поста:
-ЗАГОЛОВОК: {title}
-ИСТОЧНИК: {source}
+структура поста:
+1. Что это за инструмент — одно предложение
+2. Что умеет — 3-4 конкретных пункта (коротко)
+3. Зачем это малому бизнесу — 1-2 предложения от себя
+4. Ссылка на продукт
 
-ПОЛНЫЙ ТЕКСТ:
-{full_text}
-
+тон: нейтральный, информативный, без восторгов
 хештег в конце: {hashtag}
 """
 
-POST_FROM_SUMMARY_PROMPT = """у тебя есть заголовок и краткое описание статьи.
-напиши на их основе пост для телеграм-канала в стиле автора.
+COMPETITORS_PROMPT = """у тебя есть пост из телеграм-канала коллеги/конкурента.
+перепиши его для канала @bazuevaconsalt — возьми идею, но подай через свой опыт и аудиторию.
 
 {style}
 
-примеры постов автора для ориентира по стилю:
+примеры постов автора:
 {examples}
 
-материал:
-ЗАГОЛОВОК: {title}
-ИСТОЧНИК: {source}
-ОПИСАНИЕ: {summary}
+важно:
+- не копируй дословно — возьми суть и переосмысли
+- добавь свой угол зрения: "я тоже с этим сталкиваюсь", "у моих клиентов такая же история"
+- аудитория — предприниматели малого бизнеса, не крупный корпорат
 
-хештег в конце: {hashtag}
-"""
-
-POST_FROM_TG_PROMPT = """у тебя есть пост из русскоязычного телеграм-канала.
-напиши на его основе пост для телеграм-канала @bazuevaconsalt в стиле автора.
-
-{style}
-
-примеры постов автора для ориентира по стилю:
-{examples}
-
-исходный пост:
-АВТОР: {source}
-
-ТЕКСТ:
+исходный пост от {source}:
 {text}
 
 хештег в конце: {hashtag}
 """
 
-VOICE_NOTE_TO_POST_PROMPT = """у тебя есть голосовая заметка автора — сырая мысль, записанная на ходу.
-переработай её в готовый пост для телеграм-канала, сохранив голос и стиль автора.
+USEFUL_PROMPT = """у тебя есть пост из телеграм-канала про AI и инструменты для бизнеса.
+адаптируй его для канала @bazuevaconsalt — сделай понятным для предпринимателей малого бизнеса.
 
 {style}
 
-примеры постов автора для ориентира по стилю:
+примеры постов автора:
+{examples}
+
+важно:
+- объясни простым языком, без технического жаргона
+- покажи практическую пользу для малого бизнеса
+- если это инструмент — как его использовать конкретно
+
+исходный пост от {source}:
+{text}
+
+хештег в конце: {hashtag}
+"""
+
+CONTENT_PLAN_PROMPT = """напиши учебный пост для телеграм-канала предпринимателей на заданную тему.
+
+{style}
+
+примеры постов автора:
+{examples}
+
+тема поста: {topic}
+
+структура:
+- начни с конкретного наблюдения или ситуации ("часто вижу на консультациях...", "недавно клиент...")
+- назови проблему прямо
+- дай 2-3 конкретных совета или шага
+- заверши сильным выводом
+
+пиши от первого лица, как будто это реальный кейс из практики.
+хештег в конце: {hashtag}
+"""
+
+VOICE_NOTE_PROMPT = """у тебя есть голосовая заметка автора — сырая мысль, записанная на ходу.
+переработай её в готовый пост для телеграм-канала, сохранив голос автора.
+
+{style}
+
+примеры постов автора:
 {examples}
 
 важно:
 - сохрани суть и личный опыт автора
 - не добавляй ничего от себя — только развей и оформи то, что уже сказано
-- если мысль незаконченная — логично дооформи её в рамках той же идеи
+- если мысль незаконченная — логично дооформи в рамках той же идеи
 - пост должен звучать как будто автор сам его написал
 
 голосовая заметка (транскрипция):
@@ -249,103 +163,180 @@ VOICE_NOTE_TO_POST_PROMPT = """у тебя есть голосовая заме�
 """
 
 
-def _is_tg_url(url: str) -> bool:
-    """Проверить, является ли URL ссылкой на Telegram-пост."""
-    return "t.me/" in url
+def _fetch_full_text(url: str) -> str:
+    if not url or "t.me/" in url:
+        return ""
+    try:
+        resp = requests.get(url, timeout=12, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; ContentBot/1.0)",
+        })
+        soup = BeautifulSoup(resp.text, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+            tag.decompose()
+        text = soup.get_text(separator="\n", strip=True)
+        text_lower = text.lower()
+        if any(marker in text_lower for marker in PAYWALL_MARKERS):
+            if len(text) < 1500:
+                logger.info(f"Paywall detected, skipping full text: {url[:60]}")
+                return ""
+        return text if len(text) > 200 else ""
+    except Exception as e:
+        logger.warning(f"Full text fetch failed for {url[:60]}: {e}")
+        return ""
 
 
-def transform(item: ContentItem) -> str:
-    """Загрузить полный текст статьи и написать пост для Telegram-канала."""
-
-    if _is_tg_url(item.url) and item.summary and len(item.summary) >= 80:
-        logger.info(f"TG post, using summary directly: {item.title[:50]}")
-        prompt = POST_FROM_TG_PROMPT.format(
-            style=AUTHOR_STYLE_DESCRIPTION,
-            examples=AUTHOR_VOICE_EXAMPLES,
-            source=item.source,
-            text=item.summary[:3000],
-            hashtag=item.hashtag,
-        )
-        max_tokens = 700
-    else:
-        full_text = _fetch_full_text(item.url)
-
-        if full_text:
-            prompt = POST_FROM_FULL_TEXT_PROMPT.format(
-                style=AUTHOR_STYLE_DESCRIPTION,
-                examples=AUTHOR_VOICE_EXAMPLES,
-                title=item.title,
-                source=item.source,
-                full_text=full_text[:MAX_TEXT_CHARS],
-                hashtag=item.hashtag,
-            )
-            max_tokens = 800
-            logger.info(f"Using full text ({len(full_text)} chars) for: {item.title[:50]}")
-        else:
-            logger.info(f"Using RSS summary for: {item.title[:50]}")
-            prompt = POST_FROM_SUMMARY_PROMPT.format(
-                style=AUTHOR_STYLE_DESCRIPTION,
-                examples=AUTHOR_VOICE_EXAMPLES,
-                title=item.title,
-                source=item.source,
-                summary=item.summary[:2000] if item.summary else "(нет описания)",
-                hashtag=item.hashtag,
-            )
-            max_tokens = 600
-
+def _call_gpt(system: str, user: str, max_tokens: int = 700, temperature: float = 0.6) -> str:
     try:
         response = client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "ты — редактор телеграм-канала Насти Базуевой о бизнесе для предпринимателей. "
-                        "пишешь от её лица: живо, прямолинейно, из практики. "
-                        "никакого официоза, никакой воды. только конкретные мысли."
-                    ),
-                },
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
             ],
             max_tokens=max_tokens,
-            temperature=0.6,
+            temperature=temperature,
         )
-        text = response.choices[0].message.content.strip()
-        logger.info(f"Post generated [{item.post_format}]: {item.title[:50]}...")
-        return text
+        return response.choices[0].message.content.strip()
     except Exception as e:
-        logger.error(f"Post generation failed: {e}")
+        logger.error(f"GPT call failed: {e}")
         return ""
+
+
+def transform(item) -> str:
+    """Написать пост по ContentItem. Выбирает промпт по post_format."""
+    fmt = item.post_format
+
+    system = (
+        "ты — редактор телеграм-канала Насти Базуевой о бизнесе для предпринимателей. "
+        "пишешь от её лица: живо, прямолинейно, из практики. "
+        "никакого официоза, никакой воды. только конкретные мысли."
+    )
+
+    if fmt == "tools":
+        prompt = TOOLS_PROMPT.format(
+            style=AUTHOR_STYLE,
+            title=item.title,
+            summary=item.summary[:1500] if item.summary else "",
+            url=item.url,
+            hashtag=item.hashtag,
+        )
+        text = _call_gpt(system, prompt, max_tokens=600)
+
+    elif fmt == "competitors":
+        post_text = item.summary or item.title
+        prompt = COMPETITORS_PROMPT.format(
+            style=AUTHOR_STYLE,
+            examples=AUTHOR_EXAMPLES,
+            source=item.source,
+            text=post_text[:3000],
+            hashtag=item.hashtag,
+        )
+        text = _call_gpt(system, prompt, max_tokens=700)
+
+    elif fmt == "useful":
+        post_text = item.summary or item.title
+        prompt = USEFUL_PROMPT.format(
+            style=AUTHOR_STYLE,
+            examples=AUTHOR_EXAMPLES,
+            source=item.source,
+            text=post_text[:3000],
+            hashtag=item.hashtag,
+        )
+        text = _call_gpt(system, prompt, max_tokens=700)
+
+    elif fmt == "content_plan":
+        prompt = CONTENT_PLAN_PROMPT.format(
+            style=AUTHOR_STYLE,
+            examples=AUTHOR_EXAMPLES,
+            topic=item.title,
+            hashtag=item.hashtag,
+        )
+        text = _call_gpt(system, prompt, max_tokens=700, temperature=0.7)
+
+    else:
+        # Fallback
+        full_text = _fetch_full_text(item.url)
+        if full_text:
+            user_prompt = (
+                f"напиши пост для телеграм-канала предпринимателей.\n"
+                f"{AUTHOR_STYLE}\nпримеры:\n{AUTHOR_EXAMPLES}\n"
+                f"ЗАГОЛОВОК: {item.title}\nИСТОЧНИК: {item.source}\n"
+                f"ТЕКСТ:\n{full_text[:MAX_TEXT_CHARS]}\n"
+                f"хештег в конце: {item.hashtag}"
+            )
+            text = _call_gpt(system, user_prompt, max_tokens=700)
+        else:
+            user_prompt = (
+                f"напиши пост для телеграм-канала предпринимателей.\n"
+                f"{AUTHOR_STYLE}\nпримеры:\n{AUTHOR_EXAMPLES}\n"
+                f"ЗАГОЛОВОК: {item.title}\nИСТОЧНИК: {item.source}\n"
+                f"ОПИСАНИЕ: {item.summary[:1500] if item.summary else ''}\n"
+                f"хештег в конце: {item.hashtag}"
+            )
+            text = _call_gpt(system, user_prompt, max_tokens=600)
+
+    logger.info(f"Post generated [{fmt}]: {item.title[:50]}")
+    return text
 
 
 def transform_voice_note(transcript: str, hashtag: str = "#мысливслух") -> str:
     """Переработать транскрипцию голосовой заметки в готовый пост."""
-    prompt = VOICE_NOTE_TO_POST_PROMPT.format(
-        style=AUTHOR_STYLE_DESCRIPTION,
-        examples=AUTHOR_VOICE_EXAMPLES,
+    prompt = VOICE_NOTE_PROMPT.format(
+        style=AUTHOR_STYLE,
+        examples=AUTHOR_EXAMPLES,
         transcript=transcript[:3000],
         hashtag=hashtag,
     )
+    system = (
+        "ты — редактор телеграм-канала Насти Базуевой. "
+        "берёшь сырую голосовую заметку и превращаешь в готовый пост. "
+        "сохраняй её голос и личный опыт — не добавляй ничего лишнего."
+    )
+    text = _call_gpt(system, prompt, max_tokens=700, temperature=0.5)
+    logger.info(f"Voice note post generated: {transcript[:40]}...")
+    return text
+
+
+def transform_content_plan_topic(topic: str, hashtag: str = "#мысливслух") -> str:
+    """Написать учебный пост по теме из контент-плана."""
+    prompt = CONTENT_PLAN_PROMPT.format(
+        style=AUTHOR_STYLE,
+        examples=AUTHOR_EXAMPLES,
+        topic=topic,
+        hashtag=hashtag,
+    )
+    system = (
+        "ты — редактор телеграм-канала Насти Базуевой. "
+        "пишешь учебные посты из практики консультанта для предпринимателей малого бизнеса. "
+        "конкретно, живо, от первого лица."
+    )
+    text = _call_gpt(system, prompt, max_tokens=700, temperature=0.7)
+    logger.info(f"Content plan post generated: {topic[:50]}")
+    return text
+
+
+def translate_title(title: str, summary: str = "") -> dict:
+    """Быстро перевести заголовок и сделать краткое описание на русском."""
+    prompt = (
+        f"переведи заголовок на русский язык и сделай краткое описание (1 предложение).\n"
+        f"заголовок: {title}\n"
+        f"описание (если есть): {summary[:300] if summary else ''}\n\n"
+        f"ответь строго в формате JSON:\n"
+        '{ "title": "...", "description": "..." }'
+    )
     try:
         response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "ты — редактор телеграм-канала Насти Базуевой. "
-                        "берёшь сырую голосовую заметку и превращаешь в готовый пост. "
-                        "сохраняй её голос и личный опыт — не добавляй ничего лишнего."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=700,
-            temperature=0.5,
+            model="gpt-4.1-nano",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=150,
+            temperature=0.3,
         )
         text = response.choices[0].message.content.strip()
-        logger.info(f"Voice note post generated: {transcript[:40]}...")
-        return text
+        if text.startswith("```"):
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+        return json.loads(text)
     except Exception as e:
-        logger.error(f"Voice note transform failed: {e}")
-        return ""
+        logger.warning(f"translate_title failed: {e}")
+        return {"title": title, "description": summary[:100] if summary else ""}
