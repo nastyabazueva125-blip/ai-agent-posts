@@ -17,11 +17,11 @@ import os
 from datetime import datetime, timedelta
 from typing import Optional
 
-from openai import OpenAI
+from groq import Groq
 
 logger = logging.getLogger(__name__)
 
-client = OpenAI()
+client = Groq()
 
 PLAN_FILE = "weekly_plan.json"
 
@@ -84,7 +84,7 @@ def generate_weekly_plan() -> list[str]:
     prompt = GENERATE_PLAN_PROMPT.format(examples=TOPIC_EXAMPLES)
     try:
         response = client.chat.completions.create(
-            model="gpt-4.1-mini",
+            model="llama-3.3-70b-versatile",
             messages=[
                 {
                     "role": "system",

@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# OpenAI API key — читается автоматически из OPENAI_API_KEY
+# Groq API key — читается автоматически из GROQ_API_KEY
 # Telegram
 TELEGRAM_BOT_TOKEN    = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHANNEL_ID   = os.environ["TELEGRAM_CHANNEL_ID"]

@@ -632,11 +632,11 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
                 await file.download_to_drive(tmp.name)
                 tmp_path = tmp.name
-            import openai as _openai
-            _client = _openai.OpenAI()
+            from groq import Groq as _Groq
+            _client = _Groq()
             with open(tmp_path, "rb") as audio_file:
                 transcription = _client.audio.transcriptions.create(
-                    model="whisper-1",
+                    model="whisper-large-v3",
                     file=audio_file,
                     language="ru"
                 )
