@@ -49,7 +49,6 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("/tmp/bot.log"),
     ],
 )
 logger = logging.getLogger(__name__)
@@ -673,11 +672,15 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
                 await file.download_to_drive(tmp.name)
                 tmp_path = tmp.name
-            result = subprocess.run(
-                ["manus-speech-to-text", tmp_path],
-                capture_output=True, text=True, timeout=120,
-            )
-            transcript = result.stdout.strip()
+            import openai as _openai
+            _client = _openai.OpenAI()
+            with open(tmp_path, "rb") as audio_file:
+                transcription = _client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    language="ru"
+                )
+            transcript = transcription.text.strip()
             os.unlink(tmp_path)
             if not transcript:
                 await update.message.reply_text("Не удалось распознать речь.")
