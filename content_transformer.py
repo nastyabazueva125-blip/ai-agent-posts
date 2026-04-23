@@ -14,11 +14,11 @@ import logging
 
 import requests
 from bs4 import BeautifulSoup
-from openai import OpenAI
+from groq import Groq
 
 logger = logging.getLogger(__name__)
 
-client = OpenAI()
+client = Groq()
 
 MAX_TEXT_CHARS = 6000
 PAYWALL_MARKERS = [
@@ -188,7 +188,7 @@ def _fetch_full_text(url: str) -> str:
 def _call_gpt(system: str, user: str, max_tokens: int = 700, temperature: float = 0.6) -> str:
     try:
         response = client.chat.completions.create(
-            model="gpt-4.1-mini",
+            model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -326,7 +326,7 @@ def translate_title(title: str, summary: str = "") -> dict:
     )
     try:
         response = client.chat.completions.create(
-            model="gpt-4.1-nano",
+            model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=150,
             temperature=0.3,

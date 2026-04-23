@@ -155,36 +155,16 @@ def _build_digest_blocking() -> list:
     try:
         comp_posts = []
         for ch in cs.TG_COMPETITORS:
-            posts = ts.fetch_channel_posts(ch["handle"], max_posts=10)
-            for p in posts:
-                p["_channel"] = ch
+            posts = ts.fetch_tg_channel(ch, max_items=10)
             comp_posts.extend(posts)
         random.shuffle(comp_posts)
         comp_added = 0
         for p in comp_posts:
             if comp_added >= 3:
                 break
-            item_id = p.get("url", "") or p.get("text", "")[:50]
+            item_id = p.url or p.summary[:50]
             if item_id not in seen:
-                ch = p["_channel"]
-                from dataclasses import dataclass
-                @dataclass
-                class TGItem:
-                    title: str
-                    url: str
-                    summary: str
-                    source: str
-                    post_format: str
-                    hashtag: str
-                    published: str = ""
-                items.append(TGItem(
-                    title=p.get("text", "")[:120] + "...",
-                    url=p.get("url", ""),
-                    summary=p.get("text", ""),
-                    source=ch["name"],
-                    post_format="competitors",
-                    hashtag=ch["hashtag"],
-                ))
+                items.append(p)
                 comp_added += 1
     except Exception as e:
         logger.warning(f"Competitors TG fetch failed: {e}")
@@ -193,36 +173,16 @@ def _build_digest_blocking() -> list:
     try:
         useful_posts = []
         for ch in cs.TG_USEFUL:
-            posts = ts.fetch_channel_posts(ch["handle"], max_posts=10)
-            for p in posts:
-                p["_channel"] = ch
+            posts = ts.fetch_tg_channel(ch, max_items=10)
             useful_posts.extend(posts)
         random.shuffle(useful_posts)
         useful_added = 0
         for p in useful_posts:
             if useful_added >= 2:
                 break
-            item_id = p.get("url", "") or p.get("text", "")[:50]
+            item_id = p.url or p.summary[:50]
             if item_id not in seen:
-                ch = p["_channel"]
-                from dataclasses import dataclass
-                @dataclass
-                class TGItem2:
-                    title: str
-                    url: str
-                    summary: str
-                    source: str
-                    post_format: str
-                    hashtag: str
-                    published: str = ""
-                items.append(TGItem2(
-                    title=p.get("text", "")[:120] + "...",
-                    url=p.get("url", ""),
-                    summary=p.get("text", ""),
-                    source=ch["name"],
-                    post_format="useful",
-                    hashtag=ch["hashtag"],
-                ))
+                items.append(p)
                 useful_added += 1
     except Exception as e:
         logger.warning(f"Useful TG fetch failed: {e}")
