@@ -99,7 +99,7 @@ def fetch_tg_channel(channel: dict, max_items: int = 10) -> list:
     """
     from content_sources import ContentItem
 
-    username = channel["username"]
+    username = channel.get("username") or channel.get("handle")
     url = f"https://t.me/s/{username}"
     items = []
     cutoff = datetime.now(timezone.utc) - timedelta(days=MAX_AGE_DAYS)
@@ -150,7 +150,7 @@ def fetch_tg_channel(channel: dict, max_items: int = 10) -> list:
                 url=post_url,
                 summary=summary,
                 source=channel["name"],
-                post_format=channel["post_format"],
+                post_format=channel.get("post_format", "useful"),
                 hashtag=channel["hashtag"],
                 published=published_fmt,
                 published_dt=dt,
